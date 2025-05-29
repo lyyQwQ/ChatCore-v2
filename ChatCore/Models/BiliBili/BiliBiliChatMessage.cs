@@ -90,12 +90,39 @@ namespace ChatCore.Models.Bilibili
 				else
 				{
 					var isEmotion = int.Parse(info[0][12].Value) == 1;
-					var extra = JSON.Parse(info[0][15]["extra"].Value);
+					// 处理 extra 字段，增加空值检查
+					JSONNode extra = null;
+					try
+					{
+						if (info[0].Count > 15 && info[0][15] != null && info[0][15]["extra"] != null)
+						{
+							extra = JSON.Parse(info[0][15]["extra"].Value);
+						}
+					}
+					catch { }
+					
 					b.MessageType = isEmotion ? "danmuku_motion" : "danmuku";
 					b.Uid = info[2][0].ToString();
 					b.Username = info[2][1].Value;
 					b.Content = (isEmotion ? "[表情]" : "") + info[1].Value.ToString();
-					b.Color = "#" + int.Parse(extra["color"]).ToString("X");
+					
+					// 处理颜色，增加空值检查
+					if (extra != null && extra["color"] != null)
+					{
+						try
+						{
+							b.Color = "#" + int.Parse(extra["color"]).ToString("X");
+						}
+						catch
+						{
+							b.Color = "#FFFFFF"; // 默认白色
+						}
+					}
+					else
+					{
+						b.Color = "#FFFFFF"; // 默认白色
+					}
+					
 					b.Message = info[1].Value;
 					// b.Message = (isEmotion ? "[表情]" : "") + info[1].Value;
 					var Sender = new BilibiliChatUser();
@@ -103,7 +130,16 @@ namespace ChatCore.Models.Bilibili
 					Sender.SetUserName(b.Username);
 					Sender.SetIsModerator(info[2][2].AsInt);
 					Sender.SetGuardLevel(info[7].AsInt);
-					Sender.SetHonorLevel(info[16][0].AsInt);
+					
+					// 处理 HonorLevel，增加边界检查
+					if (info.Count > 16 && info[16] != null && info[16].Count > 0)
+					{
+						Sender.SetHonorLevel(info[16][0].AsInt);
+					}
+					else
+					{
+						Sender.SetHonorLevel(0); // 默认值
+					}
 					var MedalNull = (info[3].AsArray!).Count;
 					if (MedalNull == 0)
 					{

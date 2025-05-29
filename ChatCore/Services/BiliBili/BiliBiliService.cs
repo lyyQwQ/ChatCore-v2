@@ -37,7 +37,7 @@ namespace ChatCore.Services.Bilibili
 		private static readonly string BilibiliChatTokenApi = "https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?type=0&id=";
 		private static readonly string BilibiliEmotionsApi = "https://api.live.bilibili.com/xlive/web-ucenter/v2/emoticon/GetEmoticons?platform=pc&room_id=";
 		private static readonly string BilibiliFingerprintApi = "https://api.bilibili.com/x/frontend/finger/spi";
-		private static readonly string BilibiliCookieValidApi = "https://passport.bilibili.com/x/passport-login/web/cookie/info?csrf=";
+        private static readonly string BilibiliValidateLoginInfoApi = "https://api.vc.bilibili.com/link_setting/v1/link_setting/get";
 
 		private readonly ILogger _logger;
 		private readonly IWebSocketService _websocketService;
@@ -423,7 +423,7 @@ namespace ChatCore.Services.Bilibili
 				{
 					_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | Get Channel Info failed. ({(apiResult == null ? "connection failed" : (apiResult[0] + " " + apiResult[1]))})");
 				}
-				
+
 			}
 			catch {
 				_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | Get Channel Info failed. (Exception)");
@@ -483,33 +483,42 @@ namespace ChatCore.Services.Bilibili
 			return _cookie_items.TryGetValue(key, out var value)? value : "";
 		}
 
-		private async Task<bool> GetCookieStatusAsync()
-		{
-			_logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Start");
-			var _csrf = GetValueFromCookie("bili_jct");
-			var _status = false;
-			if (_csrf != "")
-			{
-				try
-				{
-					var apiResult = await (new HttpClientUtils()).HttpClient(BilibiliCookieValidApi + _csrf, HttpMethod.Get, _authManager.Credentials.Bilibili_cookies, null);
-					if (apiResult != null && apiResult[0] == "OK")
-					{
-						var NewCookieStatusInfo = JSONNode.Parse(apiResult[1]);
-						if (NewCookieStatusInfo["code"] == 0)
-						{
-							_logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Valid!");
-							_status = true;
-						}
-						else if (NewCookieStatusInfo["code"] == -101)
-						{
-							_logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Failed, Cookie is invalid!");
-						}
-					}
-					else
-					{
-						_logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Get cookie status failed. ({(apiResult == null ? "connection failed" : (apiResult[0] + " " + apiResult[1]))})");
-					}
+                private async Task<bool> GetCookieStatusAsync()
+                {
+                        _logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Start");
+                        var _csrf = GetValueFromCookie("bili_jct");
+                        var _status = false;
+                        if (_csrf != "")
+                        {
+                                try
+                                {
+                                        var content = new FormUrlEncodedContent(new Dictionary<string, string>
+                                        {
+                                                { "msg_notify", "1" },
+                                                { "show_unfollowed_msg", "1" },
+                                                { "build", "0" },
+                                                { "mobi_app", "web" },
+                                                { "csrf_token", _csrf },
+                                                { "csrf", _csrf }
+                                        });
+                                        var apiResult = await (new HttpClientUtils()).HttpClient(BilibiliValidateLoginInfoApi, HttpMethod.Post, _authManager.Credentials.Bilibili_cookies, content);
+                                        if (apiResult != null && apiResult[0] == "OK")
+                                        {
+                                                var NewCookieStatusInfo = JSONNode.Parse(apiResult[1]);
+                                                if (NewCookieStatusInfo["code"].AsInt == 0)
+                                                {
+                                                        _logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Valid!");
+                                                        _status = true;
+                                                }
+                                                else
+                                                {
+                                                        _logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Failed, Cookie is invalid!");
+                                                }
+                                        }
+                                        else
+                                        {
+                                                _logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Get cookie status failed. ({(apiResult == null ? "connection failed" : (apiResult[0] + " " + apiResult[1]))})");
+                                        }
 				}
 				catch
 				{
@@ -557,7 +566,31 @@ namespace ChatCore.Services.Bilibili
 
 			try
 			{
-				var apiResult = await (new HttpClientUtils()).HttpClient(BilibiliChatTokenApi + roomID, HttpMethod.Get, _cookie_valid ? _authManager.Credentials.Bilibili_cookies : "", null);
+				// 构建基础参数
+				var parameters = new Dictionary<string, string>
+				{
+					["id"] = roomID.ToString(),
+					["type"] = "0",
+					["web_location"] = "444.8"
+				};
+
+				// 尝试使用 WBI 签名
+				string finalUrl;
+				try
+				{
+					var signedParams = await ChatCore.Utilities.BLive.WbiUtils.SignParametersAsync(parameters, _cookie_valid ? _authManager.Credentials.Bilibili_cookies : "");
+					var queryString = string.Join("&", signedParams.Select(kv => $"{kv.Key}={Uri.EscapeDataString(kv.Value)}"));
+					finalUrl = $"https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?{queryString}";
+					_logger.LogInformation($"[BilibiliService] | [GetChatTokenAsync] | Using WBI signed request");
+				}
+				catch (Exception wbiEx)
+				{
+					// WBI 签名失败，使用原始 URL（带 web_location）
+					_logger.LogWarning($"[BilibiliService] | [GetChatTokenAsync] | WBI signing failed: {wbiEx.Message}, falling back to basic request");
+					finalUrl = $"https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?type=0&web_location=444.8&id={roomID}";
+				}
+
+				var apiResult = await (new HttpClientUtils()).HttpClient(finalUrl, HttpMethod.Get, _cookie_valid ? _authManager.Credentials.Bilibili_cookies : "", null);
 				if (apiResult != null && apiResult[0] == "OK")
 				{
 					Console.WriteLine(apiResult[1]);
@@ -571,7 +604,12 @@ namespace ChatCore.Services.Bilibili
 					else
 					{
 						_logger.LogInformation($"[BilibiliService] | [GetChatTokenAsync] | Get token failed. ({NewChatTokenInfo["code"]} {NewChatTokenInfo["message"]})");
-
+						// 如果是 -352 错误，清除 WBI 缓存
+						if (NewChatTokenInfo["code"] == -352)
+						{
+							ChatCore.Utilities.BLive.WbiUtils.ClearCache();
+							_logger.LogInformation($"[BilibiliService] | [GetChatTokenAsync] | Cleared WBI cache due to -352 error");
+						}
 					}
 				}
 				else
@@ -748,7 +786,7 @@ namespace ChatCore.Services.Bilibili
 								if (_wssLink != "")
 								{
 									UpdateCookieStatusAndDo("emotion");
-									
+
 									if (_websocketService.IsConnected)
 									{
 										_websocketService.Disconnect();

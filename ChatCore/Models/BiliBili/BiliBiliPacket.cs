@@ -72,13 +72,13 @@ namespace ChatCore.Models.Bilibili
 		/// <returns></returns>
 		public static BilibiliPacket CreateGreetingPacket(int uid, int roomId)
 		{
-			var json = new JSONObject();
-			//json["clientver"] = "1.6.3";
-			//json["platform"] = "web";
-			//json["protover"] = new JSONNumber(3);
-			json["roomid"] = new JSONNumber(roomId);
-			json["uid"] = new JSONNumber(uid);
-			//json["type"] = new JSONNumber(2);
+                       var json = new JSONObject();
+                       json["uid"] = new JSONNumber(uid);
+                       json["roomid"] = new JSONNumber(roomId);
+                       json["protover"] = new JSONNumber(2);
+                       json["platform"] = "web";
+                       json["clientver"] = "1.14.3";
+                       json["type"] = new JSONNumber(2);
 
 			return new BilibiliPacket(DanmakuOperation.GreetingReq, json);
 		}
@@ -93,14 +93,15 @@ namespace ChatCore.Models.Bilibili
 		/// <returns></returns>
 		public static BilibiliPacket CreateGreetingPacket(int uid, int roomId, string token, string buvid)
 		{
-			var json = new JSONObject();
-			json["uid"] = new JSONNumber(uid);
-			json["roomid"] = new JSONNumber(roomId);
-			json["protover"] = new JSONNumber(2);
-			json["buvid"] = new JSONString(buvid);
-			json["platform"] = "web";
-			json["type"] = new JSONNumber(3);
-			json["key"] = new JSONString(token);
+                       var json = new JSONObject();
+                       json["uid"] = new JSONNumber(uid);
+                       json["roomid"] = new JSONNumber(roomId);
+                       json["protover"] = new JSONNumber(2);
+                       json["buvid"] = new JSONString(buvid);
+                       json["platform"] = "web";
+                       json["clientver"] = "1.14.3";
+                       json["type"] = new JSONNumber(2);
+                       json["key"] = new JSONString(token);
 			//Console.WriteLine(json.ToString());
 			return new BilibiliPacket(DanmakuOperation.GreetingReq, json);
 		}
