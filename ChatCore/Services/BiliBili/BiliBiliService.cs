@@ -73,6 +73,11 @@ namespace ChatCore.Services.Bilibili
 		private bool _cookie_valid = false;
 
 		private readonly System.Timers.Timer packetTimer;
+		
+		// 重连延迟机制相关字段
+		private int _reconnectAttempts = 0;
+		private DateTime _lastReconnectTime = DateTime.MinValue;
+		private readonly object _reconnectLock = new object();
 
 		public ReadOnlyDictionary<string, IChatChannel> Channels { get; }
 
@@ -312,9 +317,43 @@ namespace ChatCore.Services.Bilibili
 			}
 		}
 
-		public void reloadWebsocketConnection() {
+		public async void reloadWebsocketConnection() {
 			if (_enable)
 			{
+				lock (_reconnectLock)
+				{
+					// 实现指数退避延迟
+					var timeSinceLastReconnect = DateTime.Now - _lastReconnectTime;
+					if (timeSinceLastReconnect < TimeSpan.FromSeconds(5))
+					{
+						// 计算延迟时间：2^attempts 秒，最多30秒
+						var delaySeconds = Math.Min(30, Math.Pow(2, _reconnectAttempts));
+						_logger.LogInformation($"[BilibiliService] | [ws_reload] | Delaying reconnection by {delaySeconds} seconds (attempt #{_reconnectAttempts + 1})");
+						
+						// 使用 Task.Delay 异步等待
+						Task.Delay(TimeSpan.FromSeconds(delaySeconds)).ContinueWith(_ =>
+						{
+							if (_enable)
+							{
+								_logger.LogInformation($"[BilibiliService] | [ws_reload] | Connecting using {_settings.danmuku_service_method} after delay");
+								Start(true);
+							}
+						});
+						
+						_reconnectAttempts++;
+						return;
+					}
+					
+					// 如果距离上次重连超过5秒，重置重连计数
+					if (timeSinceLastReconnect > TimeSpan.FromMinutes(1))
+					{
+						_reconnectAttempts = 0;
+					}
+					
+					_lastReconnectTime = DateTime.Now;
+					_reconnectAttempts++;
+				}
+				
 				_logger.LogInformation($"[BilibiliService] | [ws_reload] | Connecting using {_settings.danmuku_service_method}");
 				Start(true);
 			}
@@ -335,6 +374,14 @@ namespace ChatCore.Services.Bilibili
 				if (message.Operation == BilibiliPacket.DanmakuOperation.GreetingAck)
 				{
 					_logger.LogInformation("[BilibiliService] | [ws_OnDataRecevied] | Bilibili Connected");
+					
+					// 连接成功，重置重试计数器
+					lock (_reconnectLock)
+					{
+						_reconnectAttempts = 0;
+						_logger.LogInformation("[BilibiliService] | [ws_OnDataRecevied] | Reset reconnect attempts counter");
+					}
+					
 					if (!_channels.ContainsKey($"{RoomID}"))
 					{
 						forwardPacket(json, true);
@@ -570,27 +617,66 @@ namespace ChatCore.Services.Bilibili
 				var parameters = new Dictionary<string, string>
 				{
 					["id"] = roomID.ToString(),
-					["type"] = "0",
-					["web_location"] = "444.8"
+					["type"] = "0"
 				};
 
 				// 尝试使用 WBI 签名
 				string finalUrl;
 				try
 				{
+					// getDanmuInfo API 使用特殊的 web_location 值
+					parameters["web_location"] = "444.8";
 					var signedParams = await ChatCore.Utilities.BLive.WbiUtils.SignParametersAsync(parameters, _cookie_valid ? _authManager.Credentials.Bilibili_cookies : "");
+					
+					// 验证签名是否成功
+					if (!signedParams.ContainsKey("w_rid"))
+					{
+						throw new InvalidOperationException("WBI signing failed - no w_rid generated");
+					}
+					
 					var queryString = string.Join("&", signedParams.Select(kv => $"{kv.Key}={Uri.EscapeDataString(kv.Value)}"));
 					finalUrl = $"https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?{queryString}";
 					_logger.LogInformation($"[BilibiliService] | [GetChatTokenAsync] | Using WBI signed request");
 				}
 				catch (Exception wbiEx)
 				{
-					// WBI 签名失败，使用原始 URL（带 web_location）
-					_logger.LogWarning($"[BilibiliService] | [GetChatTokenAsync] | WBI signing failed: {wbiEx.Message}, falling back to basic request");
+					// WBI 签名失败，立即切换到 Legacy 模式
+					_logger.LogError($"[BilibiliService] | [GetChatTokenAsync] | WBI signing failed: {wbiEx.Message}, switching to Legacy mode immediately");
+					
+					// 清除 WBI 缓存
+					ChatCore.Utilities.BLive.WbiUtils.ClearCache();
+					
+					// 自动降级到 Legacy 模式
+					if (_settings.danmuku_service_method == "Default")
+					{
+						_settings.danmuku_service_method = "Legacy";
+						_settings.Save();
+						_logger.LogWarning($"[BilibiliService] | [GetChatTokenAsync] | Permanently switched to Legacy mode due to WBI signing failure");
+						
+						// 触发重新连接，使用新的 Legacy 模式
+						reloadWebsocketConnection();
+						return;
+					}
+					
+					// 如果已经是 Legacy 模式，使用原始 URL
 					finalUrl = $"https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?type=0&web_location=444.8&id={roomID}";
 				}
 
-				var apiResult = await (new HttpClientUtils()).HttpClient(finalUrl, HttpMethod.Get, _cookie_valid ? _authManager.Credentials.Bilibili_cookies : "", null);
+				// 添加必要的 cookie: opus-goback=1
+				var cookieHeader = _cookie_valid ? _authManager.Credentials.Bilibili_cookies : "";
+				if (!string.IsNullOrEmpty(cookieHeader))
+				{
+					if (!cookieHeader.Contains("opus-goback"))
+					{
+						cookieHeader += "; opus-goback=1";
+					}
+				}
+				else
+				{
+					cookieHeader = "opus-goback=1";
+				}
+
+				var apiResult = await (new HttpClientUtils()).HttpClient(finalUrl, HttpMethod.Get, cookieHeader, null);
 				if (apiResult != null && apiResult[0] == "OK")
 				{
 					Console.WriteLine(apiResult[1]);
@@ -609,6 +695,11 @@ namespace ChatCore.Services.Bilibili
 						{
 							ChatCore.Utilities.BLive.WbiUtils.ClearCache();
 							_logger.LogInformation($"[BilibiliService] | [GetChatTokenAsync] | Cleared WBI cache due to -352 error");
+							
+							// 自动切换到传统模式
+							_logger.LogWarning($"[BilibiliService] | [GetChatTokenAsync] | Switching to Legacy mode due to persistent -352 errors");
+							_settings.danmuku_service_method = "Legacy";
+							_settings.Save();
 						}
 					}
 				}

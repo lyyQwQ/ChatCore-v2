@@ -13,16 +13,24 @@ namespace ChatCore.Utilities
 {
     public class HttpClientUtils
     {
-		public static string UserAgent = @"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36";
+		public static string UserAgent = @"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0";
 
         public async Task<List<string>> HttpClient(string url, HttpMethod httpMethod, string? cookieVal, HttpContent? content)
         {
+			Console.WriteLine($"[HttpClientUtils] | [HttpClient] | {httpMethod} {url}");
 			var client = new HttpClient(new HttpClientHandler() { UseCookies = false, AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate });
             var result = new List<string>();
 			try
 			{
 				var httpRequestMessage = new HttpRequestMessage(httpMethod, url);
 				httpRequestMessage.Headers.Add("User-Agent", UserAgent);
+				
+				// 添加 Bilibili 需要的标准请求头
+				httpRequestMessage.Headers.Add("Referer", "https://live.bilibili.com");
+				httpRequestMessage.Headers.Add("Origin", "https://live.bilibili.com");
+				httpRequestMessage.Headers.Add("Accept", "application/json, text/plain, */*");
+				httpRequestMessage.Headers.Add("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
+				
 				if (cookieVal != null && cookieVal.Trim() != "")
 				{
 					httpRequestMessage.Headers.Add("Cookie", cookieVal);
@@ -41,6 +49,7 @@ namespace ChatCore.Utilities
 						result.Add(responseBody);
 						break;
 					default:
+						Console.WriteLine($"[HttpClientUtils] | [HttpClient] | Response {response.StatusCode}: {responseBody}");
 						result.Add("error");
 						result.Add($"{response.StatusCode}");
 						break;
@@ -49,6 +58,7 @@ namespace ChatCore.Utilities
 			}
 			catch (Exception e)
 			{
+				Console.WriteLine($"[HttpClientUtils] | [HttpClient] | Exception: {e.GetType().Name} - {e.Message}");
 				result.Add("error");
 				result.Add($"{e.Message}");
 			}
