@@ -317,7 +317,7 @@ namespace ChatCore.Services.Bilibili
 			}
 		}
 
-		public async void reloadWebsocketConnection() {
+		public void reloadWebsocketConnection() {
 			if (_enable)
 			{
 				lock (_reconnectLock)
@@ -486,40 +486,61 @@ namespace ChatCore.Services.Bilibili
 			if (_buvid3 == "")
 			{
 				_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | No Cookie found, try to get one!");
-				try
+				
+				// 重试机制：最多尝试3次
+				int maxRetries = 3;
+				for (int attempt = 1; attempt <= maxRetries; attempt++)
 				{
-					var apiResult = await (new HttpClientUtils()).HttpClient(BilibiliFingerprintApi, HttpMethod.Get, _authManager.Credentials.Bilibili_cookies, null);
-					if (apiResult != null && apiResult[0] == "OK")
+					try
 					{
-						var NewChatBuvidInfo = JSONNode.Parse(apiResult[1]);
-						if (NewChatBuvidInfo["code"] == 0)
+						var apiResult = await (new HttpClientUtils()).HttpClient(BilibiliFingerprintApi, HttpMethod.Get, _authManager.Credentials.Bilibili_cookies, null);
+						if (apiResult != null && apiResult[0] == "OK")
 						{
-							_buvid3 = NewChatBuvidInfo["data"]["b_3"].Value;
-							_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Success");
-							reloadWebsocketConnection();
+							var NewChatBuvidInfo = JSONNode.Parse(apiResult[1]);
+							if (NewChatBuvidInfo["code"] == 0)
+							{
+								_buvid3 = NewChatBuvidInfo["data"]["b_3"].Value;
+								_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Success on attempt {attempt}");
+								break; // 成功获取，退出重试循环
+							}
+							else
+							{
+								_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Get buvid3 failed on attempt {attempt}. ({NewChatBuvidInfo["code"]} {NewChatBuvidInfo["message"]})");
+							}
 						}
 						else
 						{
-							_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Get buvid3 failed. ({NewChatBuvidInfo["code"]} {NewChatBuvidInfo["message"]})");
+							_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Get buvid3 failed on attempt {attempt}. ({(apiResult == null ? "connection failed" : (apiResult[0] + " " + apiResult[1]))})");
 						}
 					}
-					else
+					catch (Exception ex)
 					{
-						_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Get buvid3 failed. ({(apiResult == null ? "connection failed" : (apiResult[0] + " " + apiResult[1]))})");
-						reloadWebsocketConnection();
+						_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Get buvid3 failed on attempt {attempt}. (Exception: {ex.Message})");
+					}
+					
+					// 如果不是最后一次尝试，等待后重试
+					if (attempt < maxRetries && string.IsNullOrEmpty(_buvid3))
+					{
+						await Task.Delay(1000 * attempt); // 递增延迟：1秒、2秒
+						_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Retrying... (attempt {attempt + 1}/{maxRetries})");
 					}
 				}
-				catch
+				
+				// 如果所有重试都失败，自动降级到 Legacy 模式
+				if (string.IsNullOrEmpty(_buvid3))
 				{
-					_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Get buvid3 failed. (Exception)");
-					reloadWebsocketConnection();
+					_logger.LogWarning($"[BilibiliService] | [GetChatBuvidAsync] | Failed to get buvid3 after {maxRetries} attempts, switching to Legacy mode");
+					_settings.danmuku_service_method = "Legacy";
+					_settings.Save();
 				}
 			}
 			else
 			{
 				_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Get buvid3 from cookie");
-				reloadWebsocketConnection();
 			}
+			
+			// 继续连接流程
+			reloadWebsocketConnection();
 		}
 
 		private string GetValueFromCookie(string key) {
