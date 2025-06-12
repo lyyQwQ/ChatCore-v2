@@ -167,7 +167,7 @@ namespace ChatCore.Models.Bilibili
 					{
 						var emote_list = new List<IChatEmote>();
 						BilibiliChatMessageExtra extraMsg = new BilibiliChatMessageExtraDanmuku();
-						if (extra["emots"] != null)
+						if (extra != null && extra["emots"] != null)
 						{
 							extraMsg = new BilibiliChatMessageExtraEmotionDanmuku();
 							foreach (var emote in extra["emots"])
