@@ -325,7 +325,17 @@ namespace ChatCore.Utilities
 
 		public virtual int AsInt
 		{
-			get => (int)AsDouble;
+			get {
+				var doubleValue = AsDouble;
+				// 检查是否超出 int 范围
+				if (doubleValue > int.MaxValue || doubleValue < int.MinValue)
+				{
+					// 对于超出范围的值，返回 0 避免 OverflowException
+					// 这主要用于处理 Bilibili API 返回的大数字 ID
+					return 0;
+				}
+				return (int)doubleValue;
+			}
 			set => AsDouble = value;
 		}
 
@@ -709,9 +719,16 @@ namespace ChatCore.Utilities
 								case 'u':
 									{
 										var s = aJson.Substring(i + 1, 4);
-										token.Append((char)int.Parse(
-											s,
-											NumberStyles.AllowHexSpecifier));
+										// 使用 TryParse 避免 OverflowException
+										if (int.TryParse(s, NumberStyles.AllowHexSpecifier, null, out var unicodeValue))
+										{
+											token.Append((char)unicodeValue);
+										}
+										else
+										{
+											// 如果解析失败，添加原始的转义序列
+											token.Append("\\u").Append(s);
+										}
 										i += 4;
 										break;
 									}

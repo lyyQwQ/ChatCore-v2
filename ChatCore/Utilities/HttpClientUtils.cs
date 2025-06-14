@@ -93,19 +93,43 @@ namespace ChatCore.Utilities
         }
 
 		public string RemoveExpiredTimeAndPath(string cookies) {
-			var cookies_arr = cookies.Split(';');
-			var new_cookies_list = new List<string>();
-			foreach (var cookie_item in cookies_arr)
+			try
 			{
-				var value = cookie_item.Trim();
-				if (value.StartsWith("Path=") || value.StartsWith("Domain=") || value.StartsWith("Expires=") || value.IndexOf("=") == -1)
+				if (string.IsNullOrEmpty(cookies))
 				{
-					continue;
+					Console.WriteLine($"[HttpClientUtils] | [RemoveExpiredTimeAndPath] | Input cookies is null or empty");
+					return "";
 				}
-				new_cookies_list.Add(value);
-			}
+				
+				Console.WriteLine($"[HttpClientUtils] | [RemoveExpiredTimeAndPath] | Processing cookies (length: {cookies.Length})");
+				
+				var cookies_arr = cookies.Split(';');
+				Console.WriteLine($"[HttpClientUtils] | [RemoveExpiredTimeAndPath] | Found {cookies_arr.Length} cookie segments");
+				
+				var new_cookies_list = new List<string>();
+				foreach (var cookie_item in cookies_arr)
+				{
+					var value = cookie_item.Trim();
+					Console.WriteLine($"[HttpClientUtils] | [RemoveExpiredTimeAndPath] | Processing cookie segment: '{(value.Length > 50 ? value.Substring(0, 50) + "..." : value)}'");
+					
+					if (value.StartsWith("Path=") || value.StartsWith("Domain=") || value.StartsWith("Expires=") || value.IndexOf("=") == -1)
+					{
+						Console.WriteLine($"[HttpClientUtils] | [RemoveExpiredTimeAndPath] | Skipping non-value segment: '{value.Split('=')[0]}'");
+						continue;
+					}
+					new_cookies_list.Add(value);
+				}
 
-			return string.Join("; ", new_cookies_list);
+				var result = string.Join("; ", new_cookies_list);
+				Console.WriteLine($"[HttpClientUtils] | [RemoveExpiredTimeAndPath] | Returning {new_cookies_list.Count} cookie values");
+				return result;
+			}
+			catch (Exception ex)
+			{
+				Console.WriteLine($"[HttpClientUtils] | [RemoveExpiredTimeAndPath] | Exception: {ex.GetType().Name}: {ex.Message}");
+				Console.WriteLine($"[HttpClientUtils] | [RemoveExpiredTimeAndPath] | Stack trace: {ex.StackTrace}");
+				return "";
+			}
 		}
     }
 }

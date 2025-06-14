@@ -42,6 +42,7 @@ namespace ChatCore.Services
 			_credentialsPath = Path.Combine(pathProvider.GetDataPath(), "auth.ini");
 			_credentialSerializer = new ObjectSerializer();
 			_credentialSerializer.Load(Credentials, _credentialsPath);
+			// logger.LogInformation($"[UserAuthProvider] Loaded credentials from {_credentialsPath} - Bilibili_room_id: {Credentials.Bilibili_room_id}");
 
 			Task.Delay(500).ContinueWith(_ =>
 			{

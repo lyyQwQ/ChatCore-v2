@@ -45,7 +45,7 @@ namespace ChatCore.Services
 
 		[ConfigSection("Bilibili")]
 		[ConfigMeta(Comment = "Which method/service to connect to the danmuku server. (Legacy(no login required)/OpenBLive(requre identity code)/Default(require cookies))")]
-		public string danmuku_service_method = "Legacy";
+		public string danmuku_service_method = "Default";
 		[ConfigMeta(Comment = "When enabled, Danmuku Msg will be parsed.")]
 		public bool danmuku_danmuku = true;
 		[ConfigMeta(Comment = "When enabled, Super Chat Msg will be parsed.")]
