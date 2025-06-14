@@ -43,33 +43,40 @@ namespace ChatCore.Models.Bilibili
 						decomp = dest.ToArray();
 					}
 				}
-				else if (version == 3) // Brotli
+				else if (version == 3) // Brotli - 暂时跳过
 				{
-					DataView.ByteSlice(ref buffer, headerLength, packetLength);
-
-					using (var dest = new MemoryStream())
-					{
-						// https://github.com/copyliu/bililive_dm/blob/fbe450db0af7070abdd46eb42273db31584c69f6/BiliDMLib/DanmakuLoader.cs Is wrong in packet length
-						//using (var ds = new BrotliStream(new MemoryStream(buffer), CompressionMode.Decompress, true))
-						using (var ds = new DeflateStream(new MemoryStream(buffer, 2, packetLength - headerLength - 2), CompressionMode.Decompress, true))
-						{
-							ds.CopyTo(dest);
-						}
-						decomp = dest.ToArray();
-					}
+					// 暂时不处理 Brotli 压缩，避免栈溢出问题
+					yield break;
 				}
 				else
 				{
+					// 对于其他版本，提取数据部分（去掉头部）
 					decomp = buffer;
 				}
 
 				while (offset < decomp.Length)
 				{
+					// 确保有足够的字节读取头部
+					if (offset + 16 > decomp.Length)
+						break;
+						
 					var packetLength1 = DataView.GetInt32(decomp, offset);
 					var headerLength1 = DataView.GetInt16(decomp, HEADEROFFSET + offset);
 					var version1 = DataView.GetInt16(decomp, VERSIONOFFSET + offset);
 					var operation1 = DataView.GetInt32(decomp, OPERATIONOFFSET + offset);
 					var sequence1 = DataView.GetInt32(decomp, SEQUENCEOFFSET + offset);
+
+					// 验证数据包长度的合理性
+					if (packetLength1 <= 0 || packetLength1 > decomp.Length - offset)
+					{
+						break;
+					}
+					
+					// 确保不会越界
+					if (offset + packetLength1 > decomp.Length)
+					{
+						break;
+					}
 
 					var data = (byte[])decomp.Clone();
 					DataView.ByteSlice(ref data, offset + headerLength1, offset + packetLength1);
@@ -83,6 +90,7 @@ namespace ChatCore.Models.Bilibili
 						Body = Encoding.UTF8.GetString(data, 0, data.Length),
 						Buffer = decomp
 					};
+					
 					offset += packetLength1;
 					if (packetLength1 <= 0)
 					{

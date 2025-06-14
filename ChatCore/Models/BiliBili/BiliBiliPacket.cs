@@ -20,6 +20,7 @@ namespace ChatCore.Models.Bilibili
 		{
 			var data = Encoding.UTF8.GetBytes(value);
 			var packetLen = 16 + data.Length;
+			// 头部协议版本使用1（不压缩），不要和JSON中的protover混淆
 			var header = new byte[] { 0, 0, 0, 0, 0, 16, 0, 1, 0, 0, 0, (byte)operation, 0, 0, 0, 1 };
 			WriteInt(header, 0, 4, packetLen);
 			return header.Concat(data).ToArray();
@@ -70,12 +71,12 @@ namespace ChatCore.Models.Bilibili
 		/// <param name="uid"></param>
 		/// <param name="roomId"></param>
 		/// <returns></returns>
-		public static BilibiliPacket CreateGreetingPacket(int uid, int roomId)
+		public static BilibiliPacket CreateGreetingPacket(long uid, int roomId)
 		{
                        var json = new JSONObject();
                        json["uid"] = new JSONNumber(uid);
                        json["roomid"] = new JSONNumber(roomId);
-                       json["protover"] = new JSONNumber(2);
+                       json["protover"] = new JSONNumber(2);  // 使用协议版本2（支持Deflate压缩）
                        json["platform"] = "web";
                        json["clientver"] = "1.14.3";
                        json["type"] = new JSONNumber(2);
@@ -91,19 +92,32 @@ namespace ChatCore.Models.Bilibili
 		/// <param name="token"></param>
 		/// <param name="buvid"></param>
 		/// <returns></returns>
-		public static BilibiliPacket CreateGreetingPacket(int uid, int roomId, string token, string buvid)
+		public static BilibiliPacket CreateGreetingPacket(long uid, int roomId, string token, string buvid)
 		{
                        var json = new JSONObject();
                        json["uid"] = new JSONNumber(uid);
                        json["roomid"] = new JSONNumber(roomId);
-                       json["protover"] = new JSONNumber(2);
+                       json["protover"] = new JSONNumber(2);  // 使用协议版本2（支持Deflate压缩）
                        json["buvid"] = new JSONString(buvid);
-                       json["platform"] = "web";
-                       json["clientver"] = "1.14.3";
+                       json["platform"] = new JSONString("web");
+                       json["clientver"] = new JSONString("1.14.3");
                        json["type"] = new JSONNumber(2);
                        json["key"] = new JSONString(token);
-			//Console.WriteLine(json.ToString());
-			return new BilibiliPacket(DanmakuOperation.GreetingReq, json);
+
+			// 手动构建 JSON 字符串，避免科学计数法和格式问题
+			var jsonStr = "{" +
+				$"\"uid\":{uid}," +
+				$"\"roomid\":{roomId}," +
+				$"\"protover\":2," +
+				$"\"buvid\":\"{buvid}\"," +
+				$"\"platform\":\"web\"," +
+				$"\"clientver\":\"1.14.3\"," +
+				$"\"type\":2," +
+				$"\"key\":\"{token}\"" +
+				"}";
+
+			Console.WriteLine($"[CreateGreetingPacket] Greeting JSON: {jsonStr}");
+			return new BilibiliPacket(DanmakuOperation.GreetingReq, jsonStr);
 		}
 
 		public static BilibiliPacket CreateAuthPacket(string authBody)

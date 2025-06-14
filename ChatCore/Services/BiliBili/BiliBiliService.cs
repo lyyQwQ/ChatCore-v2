@@ -61,11 +61,11 @@ namespace ChatCore.Services.Bilibili
 		private int RoomID => _authManager.Credentials.Bilibili_room_id;
 		private string IdentityCode => string.IsNullOrEmpty(_authManager.Credentials.Bilibili_identity_code) ? string.Empty : _authManager.Credentials.Bilibili_identity_code;
 		public static int _roomID { get; internal set; } = 0;
-		public static int _userID { get; internal set; } = 0;
+		public static long _userID { get; internal set; } = 0;
 		private string _wssLink => _openBLiveProvider.getWssLink();
 		private string _auth_body => _openBLiveProvider.getAuthBody();
 
-		private int _randomUid = 0;
+		private long _randomUid = 0;
 
 		private string _chatToken = "";
 		private string _buvid3 = "";
@@ -73,7 +73,7 @@ namespace ChatCore.Services.Bilibili
 		private bool _cookie_valid = false;
 
 		private readonly System.Timers.Timer packetTimer;
-		
+
 		// 重连延迟机制相关字段
 		private int _reconnectAttempts = 0;
 		private DateTime _lastReconnectTime = DateTime.MinValue;
@@ -91,9 +91,9 @@ namespace ChatCore.Services.Bilibili
 
 		private static Dictionary<string, BilibiliGiftTimer> giftTimerDict = new Dictionary<string, BilibiliGiftTimer>();
 
-		private static readonly string[] danmuku = { "danmuku", "danmuku_motion", "LIVE_OPEN_PLATFORM_DM" };
-		private static readonly string[] sc = { "super_chat", "super_chat_japanese", "LIVE_OPEN_PLATFORM_SUPER_CHAT", "LIVE_OPEN_PLATFORM_SUPER_CHAT_DEL" };
-		private static readonly string[] gift = { "gift", "LIVE_OPEN_PLATFORM_SEND_GIFT" };
+		private static readonly string[] danmuku = { "DANMU_MSG", "danmuku", "danmuku_motion", "LIVE_OPEN_PLATFORM_DM" };
+		private static readonly string[] sc = { "SUPER_CHAT_MESSAGE", "SUPER_CHAT_MESSAGE_JPN", "super_chat", "super_chat_japanese", "LIVE_OPEN_PLATFORM_SUPER_CHAT", "LIVE_OPEN_PLATFORM_SUPER_CHAT_DEL" };
+		private static readonly string[] gift = { "SEND_GIFT", "gift", "LIVE_OPEN_PLATFORM_SEND_GIFT" };
 		private static readonly string[] gift_star = { "gift_star" };
 		private static readonly string[] gift_combo = { "combo_end", "combo_send" };
 		private static readonly string[] welcome = { "welcome" };
@@ -253,6 +253,7 @@ namespace ChatCore.Services.Bilibili
 			_chatTokenLock = new object();
 			_roomID = _authManager.Credentials.Bilibili_room_id;
 			_cookies = _authManager.Credentials.Bilibili_cookies;
+			_logger.LogInformation($"[BilibiliService] Constructor - _roomID set to: {_roomID} from Credentials.Bilibili_room_id: {_authManager.Credentials.Bilibili_room_id}");
 
 			//_randomUid = rand.Next(10000, 1000000);
 
@@ -329,7 +330,7 @@ namespace ChatCore.Services.Bilibili
 						// 计算延迟时间：2^attempts 秒，最多30秒
 						var delaySeconds = Math.Min(30, Math.Pow(2, _reconnectAttempts));
 						_logger.LogInformation($"[BilibiliService] | [ws_reload] | Delaying reconnection by {delaySeconds} seconds (attempt #{_reconnectAttempts + 1})");
-						
+
 						// 使用 Task.Delay 异步等待
 						Task.Delay(TimeSpan.FromSeconds(delaySeconds)).ContinueWith(_ =>
 						{
@@ -339,21 +340,21 @@ namespace ChatCore.Services.Bilibili
 								Start(true);
 							}
 						});
-						
+
 						_reconnectAttempts++;
 						return;
 					}
-					
+
 					// 如果距离上次重连超过5秒，重置重连计数
 					if (timeSinceLastReconnect > TimeSpan.FromMinutes(1))
 					{
 						_reconnectAttempts = 0;
 					}
-					
+
 					_lastReconnectTime = DateTime.Now;
 					_reconnectAttempts++;
 				}
-				
+
 				_logger.LogInformation($"[BilibiliService] | [ws_reload] | Connecting using {_settings.danmuku_service_method}");
 				Start(true);
 			}
@@ -361,27 +362,46 @@ namespace ChatCore.Services.Bilibili
 
 		private void _websocketService_OnDataRecevied(Assembly arg1, byte[] arg2)
 		{
-			/*_logger.LogInformation("Get bytes packet!");*/
+			_logger.LogInformation($"[BilibiliService] | [ws_OnDataRecevied] | Received {arg2.Length} bytes");
+			
+			// 输出原始数据的前16个字节（头部信息）
+			if (arg2.Length >= 16)
+			{
+				var packetLength = DataView.GetInt32(arg2, 0);
+				var headerLength = DataView.GetInt16(arg2, 4);
+				var version = DataView.GetInt16(arg2, 6);
+				var operation = DataView.GetInt32(arg2, 8);
+				var sequence = DataView.GetInt32(arg2, 12);
+				_logger.LogInformation($"[BilibiliService] | [ws_OnDataRecevied] | Header: PacketLen={packetLength}, HeaderLen={headerLength}, Version={version}, Operation={operation}, Sequence={sequence}");
+			}
+			
 			//var buffer = new byte[arg2.Length];
 			// Receive the greeting ack notify, then a HeartBeat timer should be setup.
+			var messageCount = 0;
+			
+			// 直接使用 foreach 遍历，避免 ToList() 导致的栈溢出
 			foreach (var message in DanmakuMessage.ParsePackets(arg2))
 			{
+				messageCount++;
 				var json = new JSONObject();
 				json["operation_code"] = new JSONNumber((int)message.Operation);
 				json["body"] = new JSONString(message.Body);
-				// _logger.LogInformation("Operation: " + message.Operation.ToString());
+				
+				// 限制Body输出长度，避免日志过长
+				var bodyPreview = message.Body.Length > 200 ? message.Body.Substring(0, 200) + "..." : message.Body;
+				_logger.LogInformation($"[BilibiliService] | [ws_OnDataRecevied] | Message #{messageCount} - Operation: {message.Operation}, Body: {bodyPreview}");
 				// _logger.LogInformation("Data: " + json.ToString());
 				if (message.Operation == BilibiliPacket.DanmakuOperation.GreetingAck)
 				{
 					_logger.LogInformation("[BilibiliService] | [ws_OnDataRecevied] | Bilibili Connected");
-					
+
 					// 连接成功，重置重试计数器
 					lock (_reconnectLock)
 					{
 						_reconnectAttempts = 0;
 						_logger.LogInformation("[BilibiliService] | [ws_OnDataRecevied] | Reset reconnect attempts counter");
 					}
-					
+
 					if (!_channels.ContainsKey($"{RoomID}"))
 					{
 						forwardPacket(json, true);
@@ -415,10 +435,28 @@ namespace ChatCore.Services.Bilibili
 					_logger.LogInformation($"[BilibiliService] | [ws_OnDataRecevied] | Unknown Msg(Body: {message.Body})");
 				}
 			}
+			
+			// 输出总共处理的消息数量
+			_logger.LogInformation($"[BilibiliService] | [ws_OnDataRecevied] | Processed {messageCount} messages in total");
 		}
 
 		public void DanmukuProcessor(Assembly arg1, string body)
 		{
+			// 添加调试日志
+			try {
+				var bodyJson = JSONNode.Parse(body);
+				var cmd = bodyJson["cmd"]?.Value ?? "unknown";
+				_logger.LogInformation($"[BilibiliService] | [DanmukuProcessor] | Received cmd: {cmd}");
+				
+				// 如果是 DANMU_MSG，记录详细信息
+				if (cmd == "DANMU_MSG" || cmd.StartsWith("DANMU_MSG"))
+				{
+					_logger.LogInformation($"[BilibiliService] | [DanmukuProcessor] | DANMU_MSG detected! Full body: {body}");
+				}
+			} catch (Exception ex) {
+				_logger.LogError($"[BilibiliService] | [DanmukuProcessor] | Failed to parse body: {ex.Message}");
+			}
+			
 			var bmessage = new BilibiliChatMessage(body, _settings.danmuku_service_method);
 			BanDetection(bmessage);
 			if (bmessage.MessageType != "banned" && ShowDanmuku(bmessage.MessageType) && (!string.IsNullOrEmpty(bmessage.Message) || !int.TryParse(bmessage.Message, out _)))
@@ -446,14 +484,58 @@ namespace ChatCore.Services.Bilibili
 		private async void GetChannelConfigAsync(int roomID) {
 			try
 			{
+				_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | Getting channel config for room ID: {roomID}");
 				var apiResult = await (new HttpClientUtils()).HttpClient(BilibiliChannelInfoApi + roomID, HttpMethod.Get, null, null);
 				if (apiResult != null && apiResult[0] == "OK")
 				{
+					_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | API Response: {(apiResult[1].Length > 500 ? apiResult[1].Substring(0, 500) + "..." : apiResult[1])}");
 					var NewChannelInfo = JSONNode.Parse(apiResult[1]);
 					if (NewChannelInfo["data"]["room_info"]["room_id"] != string.Empty)
 					{
-						_userID = int.Parse(NewChannelInfo["data"]["room_info"]["uid"]);
-						_roomID = int.Parse(NewChannelInfo["data"]["room_info"]["room_id"]);
+						// 先获取 UID 字符串
+						var uidString = NewChannelInfo["data"]["room_info"]["uid"].Value;
+						_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | Raw UID string: '{uidString}'");
+
+						// 使用 TryParse 避免溢出异常
+						if (long.TryParse(uidString, out var parsedUserId))
+						{
+							_userID = parsedUserId;
+							_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | Successfully parsed user ID: {_userID}");
+						}
+						else
+						{
+							_logger.LogWarning($"[BilibiliService] | [GetChannelConfigAsync] | Failed to parse user ID: {uidString}");
+							_userID = 0;
+						}
+
+						// 输出完整的 room_info 结构
+						if (NewChannelInfo["data"]["room_info"] != null)
+						{
+							_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | room_info data: {NewChannelInfo["data"]["room_info"]}");
+						}
+						
+						// 尝试从不同的位置获取房间号
+						var roomIdNode = NewChannelInfo["data"]["room_info"]["room_id"];
+						if (roomIdNode == null)
+						{
+							_logger.LogWarning($"[BilibiliService] | [GetChannelConfigAsync] | room_id node is null");
+						}
+						else
+						{
+							_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | room_id value: '{roomIdNode.Value}', type: {roomIdNode.GetType().Name}");
+						}
+
+						if (int.TryParse(NewChannelInfo["data"]["room_info"]["room_id"].Value, out var parsedRoomId))
+						{
+							_roomID = parsedRoomId;
+							_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | Successfully parsed room_id: {_roomID}");
+						}
+						else
+						{
+							_logger.LogWarning($"[BilibiliService] | [GetChannelConfigAsync] | Failed to parse room ID: {NewChannelInfo["data"]["room_info"]["room_id"].Value}");
+							// 保留原有的 roomID，不要重置为 0
+							_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | Keeping original _roomID: {_roomID}");
+						}
 						_authManager.Credentials.Bilibili_room_id = _roomID;
 						LoggedInUser = new BilibiliChatUser();
 						LoggedInUser.Id = _userID.ToString();
@@ -468,25 +550,72 @@ namespace ChatCore.Services.Bilibili
 				}
 				else
 				{
-					_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | Get Channel Info failed. ({(apiResult == null ? "connection failed" : (apiResult[0] + " " + apiResult[1]))})");
+					_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | Get Channel Info failedfff. ({(apiResult == null ? "connection failed" : (apiResult[0] + " " + apiResult[1]))})");
 				}
 
 			}
-			catch {
-				_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | Get Channel Info failed. (Exception)");
+			catch (Exception ex) {
+				_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+				_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | Exception: {ex.GetType().Name}: {ex.Message}");
+				_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | Stack trace: {ex.StackTrace}");
+				_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | Get Channel Info failedddd. (Exception)");
 			}
 		}
 
 		private async void GetChatBuvidAsync()
 		{
-			_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Start");
-			_buvid3 = GetValueFromCookie("buvid3");
-			var _dedeUserID = GetValueFromCookie("DedeUserID");
-			_randomUid = _dedeUserID == "" ? 0 : int.Parse(_dedeUserID);
+			_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Starttttttttt");
+
+			try
+			{
+				// 调试日志：输出原始 Cookie 信息
+				_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Raw Cookie: {(_authManager.Credentials.Bilibili_cookies?.Length > 50 ? _authManager.Credentials.Bilibili_cookies.Substring(0, 50) + "..." : _authManager.Credentials.Bilibili_cookies)}");
+
+				_buvid3 = GetValueFromCookie("buvid3");
+				_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | buvid3 value: '{_buvid3}'");
+
+				var _dedeUserID = GetValueFromCookie("DedeUserID");
+				_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | DedeUserID raw value: '{_dedeUserID}' (length: {_dedeUserID?.Length ?? 0})");
+
+				// 检查 DedeUserID 是否为有效数字
+				if (!string.IsNullOrWhiteSpace(_dedeUserID))
+				{
+					// 先检查是否为纯数字
+					if (!System.Text.RegularExpressions.Regex.IsMatch(_dedeUserID, @"^\d+$"))
+					{
+						_logger.LogWarning($"[BilibiliService] | [GetChatBuvidAsync] | DedeUserID contains non-numeric characters: '{_dedeUserID}'");
+						_randomUid = 0;
+					}
+					else
+					{
+						// 尝试解析
+						if (long.TryParse(_dedeUserID, out _randomUid))
+						{
+							_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Successfully parsed DedeUserID to long: {_randomUid}");
+						}
+						else
+						{
+							_logger.LogWarning($"[BilibiliService] | [GetChatBuvidAsync] | Failed to parse DedeUserID to long: '{_dedeUserID}'");
+							_randomUid = 0;
+						}
+					}
+				}
+				else
+				{
+					_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | DedeUserID is empty or whitespace");
+					_randomUid = 0;
+				}
+			}
+			catch (Exception ex)
+			{
+				_logger.LogError($"[BilibiliService] | [GetChatBuvidAsync] | Exception in initial phase: {ex.GetType().Name}: {ex.Message}");
+				_logger.LogError($"[BilibiliService] | [GetChatBuvidAsync] | Stack trace: {ex.StackTrace}");
+				_randomUid = 0;
+			}
 			if (_buvid3 == "")
 			{
 				_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | No Cookie found, try to get one!");
-				
+
 				// 重试机制：最多尝试3次
 				int maxRetries = 3;
 				for (int attempt = 1; attempt <= maxRetries; attempt++)
@@ -496,8 +625,50 @@ namespace ChatCore.Services.Bilibili
 						var apiResult = await (new HttpClientUtils()).HttpClient(BilibiliFingerprintApi, HttpMethod.Get, _authManager.Credentials.Bilibili_cookies, null);
 						if (apiResult != null && apiResult[0] == "OK")
 						{
-							var NewChatBuvidInfo = JSONNode.Parse(apiResult[1]);
-							if (NewChatBuvidInfo["code"] == 0)
+							_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | API Response: {(apiResult[1].Length > 200 ? apiResult[1].Substring(0, 200) + "..." : apiResult[1])}");
+
+							// 在解析 JSON 之前记录完整响应，以便调试
+							_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Full API Response for debugging: {apiResult[1]}");
+
+							JSONNode NewChatBuvidInfo;
+							try
+							{
+								NewChatBuvidInfo = JSONNode.Parse(apiResult[1]);
+							}
+							catch (OverflowException overflowEx)
+							{
+								_logger.LogError($"[BilibiliService] | [GetChatBuvidAsync] | OverflowException during JSON Parse!");
+								_logger.LogError($"[BilibiliService] | [GetChatBuvidAsync] | API Response that caused overflow: {apiResult[1]}");
+								_logger.LogError($"[BilibiliService] | [GetChatBuvidAsync] | Exception: {overflowEx.Message}");
+								_logger.LogError($"[BilibiliService] | [GetChatBuvidAsync] | Stack trace: {overflowEx.StackTrace}");
+
+								// 尝试使用 Newtonsoft.Json 或其他方法解析，看看具体是哪个字段
+								try
+								{
+									// 用正则表达式查找可能的大数字
+									var matches = System.Text.RegularExpressions.Regex.Matches(apiResult[1], @"""(\w+)""\s*:\s*(\d{10,})");
+									foreach (System.Text.RegularExpressions.Match match in matches)
+									{
+										_logger.LogError($"[BilibiliService] | [GetChatBuvidAsync] | Found large number - Field: {match.Groups[1].Value}, Value: {match.Groups[2].Value}");
+									}
+								}
+								catch { }
+
+								throw;
+							}
+							catch (Exception parseEx)
+							{
+								_logger.LogError($"[BilibiliService] | [GetChatBuvidAsync] | JSON Parse Exception: {parseEx.GetType().Name}: {parseEx.Message}");
+								_logger.LogError($"[BilibiliService] | [GetChatBuvidAsync] | Parse Stack trace: {parseEx.StackTrace}");
+								throw;
+							}
+
+							// 安全地检查 code 字段
+							var codeNode = NewChatBuvidInfo["code"];
+							_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Code node type: {codeNode?.GetType().Name}, value: {codeNode?.ToString()}");
+
+							// 使用字符串比较避免 int 解析
+							if (codeNode != null && codeNode.ToString() == "0")
 							{
 								_buvid3 = NewChatBuvidInfo["data"]["b_3"].Value;
 								_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Success on attempt {attempt}");
@@ -505,7 +676,21 @@ namespace ChatCore.Services.Bilibili
 							}
 							else
 							{
-								_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Get buvid3 failed on attempt {attempt}. ({NewChatBuvidInfo["code"]} {NewChatBuvidInfo["message"]})");
+								// 安全地获取 message 字段，避免潜在的类型转换问题
+								string messageValue = "null";
+								try
+								{
+									var messageNode = NewChatBuvidInfo["message"];
+									if (messageNode != null)
+									{
+										messageValue = messageNode.ToString();
+									}
+								}
+								catch (Exception msgEx)
+								{
+									_logger.LogError($"[BilibiliService] | [GetChatBuvidAsync] | Error accessing message field: {msgEx.Message}");
+								}
+								_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Get buvid3 failed on attempt {attempt}. (code: {codeNode?.ToString() ?? "null"} message: {messageValue})");
 							}
 						}
 						else
@@ -516,8 +701,15 @@ namespace ChatCore.Services.Bilibili
 					catch (Exception ex)
 					{
 						_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Get buvid3 failed on attempt {attempt}. (Exception: {ex.Message})");
+
+						// 如果是 OverflowException，说明 API 返回了异常数据
+						if (ex is OverflowException)
+						{
+							_logger.LogError($"[BilibiliService] | [GetChatBuvidAsync] | OverflowException detected - API may be returning invalid data");
+							break; // 立即退出重试循环
+						}
 					}
-					
+
 					// 如果不是最后一次尝试，等待后重试
 					if (attempt < maxRetries && string.IsNullOrEmpty(_buvid3))
 					{
@@ -525,7 +717,7 @@ namespace ChatCore.Services.Bilibili
 						_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Retrying... (attempt {attempt + 1}/{maxRetries})");
 					}
 				}
-				
+
 				// 如果所有重试都失败，自动降级到 Legacy 模式
 				if (string.IsNullOrEmpty(_buvid3))
 				{
@@ -538,17 +730,50 @@ namespace ChatCore.Services.Bilibili
 			{
 				_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Get buvid3 from cookie");
 			}
-			
+
 			// 继续连接流程
 			reloadWebsocketConnection();
 		}
 
 		private string GetValueFromCookie(string key) {
-			var clean_cookie = new HttpClientUtils().RemoveExpiredTimeAndPath(_authManager.Credentials.Bilibili_cookies);
+			try
+			{
+				_logger.LogInformation($"[BilibiliService] | [GetValueFromCookie] | Getting value for key: '{key}'");
 
-			var _cookie_items = Regex.Matches(clean_cookie, @"(.+?)(?:=(.+?))?(?:;|$|,(?!\s))").Cast<Match>()
-								 .ToDictionary(m => m.Groups[1].Value.Trim(), m => m.Groups[2].Value.Trim(), StringComparer.OrdinalIgnoreCase);
-			return _cookie_items.TryGetValue(key, out var value)? value : "";
+				var rawCookie = _authManager.Credentials.Bilibili_cookies;
+				_logger.LogInformation($"[BilibiliService] | [GetValueFromCookie] | Raw cookie length: {rawCookie?.Length ?? 0}");
+
+				var clean_cookie = new HttpClientUtils().RemoveExpiredTimeAndPath(rawCookie);
+				_logger.LogInformation($"[BilibiliService] | [GetValueFromCookie] | Clean cookie length: {clean_cookie?.Length ?? 0}");
+
+				if (string.IsNullOrEmpty(clean_cookie))
+				{
+					_logger.LogWarning($"[BilibiliService] | [GetValueFromCookie] | Clean cookie is empty");
+					return "";
+				}
+
+				var _cookie_items = Regex.Matches(clean_cookie, @"(.+?)(?:=(.+?))?(?:;|$|,(?!\s))").Cast<Match>()
+									 .ToDictionary(m => m.Groups[1].Value.Trim(), m => m.Groups[2].Value.Trim(), StringComparer.OrdinalIgnoreCase);
+
+				_logger.LogInformation($"[BilibiliService] | [GetValueFromCookie] | Found {_cookie_items.Count} cookie items");
+
+				if (_cookie_items.TryGetValue(key, out var value))
+				{
+					_logger.LogInformation($"[BilibiliService] | [GetValueFromCookie] | Found value for '{key}': '{value}' (length: {value?.Length ?? 0})");
+					return value;
+				}
+				else
+				{
+					_logger.LogInformation($"[BilibiliService] | [GetValueFromCookie] | Key '{key}' not found in cookies");
+					return "";
+				}
+			}
+			catch (Exception ex)
+			{
+				_logger.LogError($"[BilibiliService] | [GetValueFromCookie] | Exception: {ex.GetType().Name}: {ex.Message}");
+				_logger.LogError($"[BilibiliService] | [GetValueFromCookie] | Stack trace: {ex.StackTrace}");
+				return "";
+			}
 		}
 
                 private async Task<bool> GetCookieStatusAsync()
@@ -573,7 +798,9 @@ namespace ChatCore.Services.Bilibili
                                         if (apiResult != null && apiResult[0] == "OK")
                                         {
                                                 var NewCookieStatusInfo = JSONNode.Parse(apiResult[1]);
-                                                if (NewCookieStatusInfo["code"].AsInt == 0)
+                                                // 使用字符串比较避免 int 溢出
+                                                var cookieCodeNode = NewCookieStatusInfo["code"];
+                                                if (cookieCodeNode != null && cookieCodeNode.ToString() == "0")
                                                 {
                                                         _logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Valid!");
                                                         _status = true;
@@ -648,13 +875,13 @@ namespace ChatCore.Services.Bilibili
 					// getDanmuInfo API 使用特殊的 web_location 值
 					parameters["web_location"] = "444.8";
 					var signedParams = await ChatCore.Utilities.BLive.WbiUtils.SignParametersAsync(parameters, _cookie_valid ? _authManager.Credentials.Bilibili_cookies : "");
-					
+
 					// 验证签名是否成功
 					if (!signedParams.ContainsKey("w_rid"))
 					{
 						throw new InvalidOperationException("WBI signing failed - no w_rid generated");
 					}
-					
+
 					var queryString = string.Join("&", signedParams.Select(kv => $"{kv.Key}={Uri.EscapeDataString(kv.Value)}"));
 					finalUrl = $"https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?{queryString}";
 					_logger.LogInformation($"[BilibiliService] | [GetChatTokenAsync] | Using WBI signed request");
@@ -663,22 +890,22 @@ namespace ChatCore.Services.Bilibili
 				{
 					// WBI 签名失败，立即切换到 Legacy 模式
 					_logger.LogError($"[BilibiliService] | [GetChatTokenAsync] | WBI signing failed: {wbiEx.Message}, switching to Legacy mode immediately");
-					
+
 					// 清除 WBI 缓存
 					ChatCore.Utilities.BLive.WbiUtils.ClearCache();
-					
+
 					// 自动降级到 Legacy 模式
 					if (_settings.danmuku_service_method == "Default")
 					{
 						_settings.danmuku_service_method = "Legacy";
 						_settings.Save();
 						_logger.LogWarning($"[BilibiliService] | [GetChatTokenAsync] | Permanently switched to Legacy mode due to WBI signing failure");
-						
+
 						// 触发重新连接，使用新的 Legacy 模式
 						reloadWebsocketConnection();
 						return;
 					}
-					
+
 					// 如果已经是 Legacy 模式，使用原始 URL
 					finalUrl = $"https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?type=0&web_location=444.8&id={roomID}";
 				}
@@ -702,7 +929,9 @@ namespace ChatCore.Services.Bilibili
 				{
 					Console.WriteLine(apiResult[1]);
 					var NewChatTokenInfo = JSONNode.Parse(apiResult[1]);
-					if (NewChatTokenInfo["code"] == 0)
+					// 使用字符串比较避免 int 溢出
+					var tokenCodeNode = NewChatTokenInfo["code"];
+					if (tokenCodeNode != null && tokenCodeNode.ToString() == "0")
 					{
 						_chatToken = NewChatTokenInfo["data"]["token"].Value;
 						_logger.LogInformation($"[BilibiliService] | [GetChatTokenAsync] | Success");
@@ -712,11 +941,12 @@ namespace ChatCore.Services.Bilibili
 					{
 						_logger.LogInformation($"[BilibiliService] | [GetChatTokenAsync] | Get token failed. ({NewChatTokenInfo["code"]} {NewChatTokenInfo["message"]})");
 						// 如果是 -352 错误，清除 WBI 缓存
-						if (NewChatTokenInfo["code"] == -352)
+						// 检查是否为 -352 错误
+						if (tokenCodeNode != null && tokenCodeNode.ToString() == "-352")
 						{
 							ChatCore.Utilities.BLive.WbiUtils.ClearCache();
 							_logger.LogInformation($"[BilibiliService] | [GetChatTokenAsync] | Cleared WBI cache due to -352 error");
-							
+
 							// 自动切换到传统模式
 							_logger.LogWarning($"[BilibiliService] | [GetChatTokenAsync] | Switching to Legacy mode due to persistent -352 errors");
 							_settings.danmuku_service_method = "Legacy";
@@ -745,7 +975,9 @@ namespace ChatCore.Services.Bilibili
 				if (apiResult != null && apiResult[0] == "OK")
 				{
 					var NewGiftInfo = JSONNode.Parse(apiResult[1]);
-					if (NewGiftInfo["code"] == 0)
+					// 使用字符串比较避免 int 溢出
+					var giftCodeNode = NewGiftInfo["code"];
+					if (giftCodeNode != null && giftCodeNode.ToString() == "0")
 					{
 						var giftList = NewGiftInfo["data"]["list"].AsArray!;
 						foreach (JSONObject gift in giftList)
@@ -788,7 +1020,9 @@ namespace ChatCore.Services.Bilibili
 				if (apiResult != null && apiResult[0] == "OK")
 				{
 					var NewWealthInfo = JSONNode.Parse(apiResult[1]);
-					if (NewWealthInfo["code"] == 0)
+					// 使用字符串比较避免 int 溢出
+					var wealthCodeNode = NewWealthInfo["code"];
+					if (wealthCodeNode != null && wealthCodeNode.ToString() == "0")
 					{
 						var wealthList = JSONNode.Parse(NewWealthInfo["data"]["content"]!)["wealth_level_medal"].AsArray!;
 						foreach (JSONObject wealth in wealthList)
@@ -828,12 +1062,16 @@ namespace ChatCore.Services.Bilibili
 					if (apiResult != null && apiResult[0] == "OK")
 					{
 						var NewEmotionsInfo = JSONNode.Parse(apiResult[1]);
-						if (NewEmotionsInfo["code"] == 0)
+						// 使用字符串比较避免 int 溢出
+						var emotionCodeNode = NewEmotionsInfo["code"];
+						if (emotionCodeNode != null && emotionCodeNode.ToString() == "0")
 						{
 							var emotionPackageList = NewEmotionsInfo["data"]["data"].AsArray!;
 							foreach (JSONObject emotionPackage in emotionPackageList)
 							{
-								if (emotionPackage["pkg_id"].AsInt == 100)
+								// 使用字符串比较避免 int 溢出
+								var pkgIdNode = emotionPackage["pkg_id"];
+								if (pkgIdNode != null && pkgIdNode.ToString() == "100")
 								{
 									// 100: emoji / emoji表情
 									var emotionList = emotionPackage["emoticons"].AsArray!;
@@ -1103,6 +1341,14 @@ namespace ChatCore.Services.Bilibili
 
 		private void SendGreetingPacket()
 		{
+			// 添加调试信息
+			_logger.LogInformation($"[BilibiliService] | [SendGreetingPacket] | Debug info:");
+			_logger.LogInformation($"  - _roomID: {_roomID}");
+			_logger.LogInformation($"  - _randomUid: {_randomUid}");
+			_logger.LogInformation($"  - _chatToken: {(_chatToken?.Length > 0 ? $"Set ({_chatToken.Length} chars)" : "Empty/Null")}");
+			_logger.LogInformation($"  - _buvid3: {(_buvid3?.Length > 0 ? $"Set ({_buvid3.Length} chars)" : "Empty/Null")}");
+			_logger.LogInformation($"  - Method: {_settings.danmuku_service_method}");
+			
 			_logger.LogInformation($"[BilibiliService] | [SendGreetingPacket] | Send Greeting packet. Connect to room {_roomID} via {_settings.danmuku_service_method}");
 			switch (_settings.danmuku_service_method)
 			{
@@ -1301,11 +1547,17 @@ namespace ChatCore.Services.Bilibili
 		public void Enable()
 		{
 			_enable = true;
+			_logger.LogInformation($"[BilibiliService] Enable() called - Current _roomID: {_roomID}");
 			GetWealthAsync();
 			if (_roomID != 0)
 			{
+				_logger.LogInformation($"[BilibiliService] Enable() - Calling GetChannelConfigAsync with roomID: {_roomID}");
 				GetChannelConfigAsync(_roomID);
 				GetChannelGiftRoomInfoAsync(_roomID);
+			}
+			else
+			{
+				_logger.LogWarning($"[BilibiliService] Enable() - Skipping GetChannelConfigAsync because _roomID is 0");
 			}
 			Start();
 		}

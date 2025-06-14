@@ -83,13 +83,15 @@ namespace ChatCore.Models.Bilibili
 		{
 			Action<BilibiliChatMessage, JSONNode> danmuku_action = (b, danmuku) => {
 				var info = danmuku["info"].AsArray!;
-				if (int.Parse(info[0][9].Value) > 0)
+				// 安全解析消息类型标志，避免溢出
+				if (int.TryParse(info[0][9].Value, out var messageTypeFlag) && messageTypeFlag > 0)
 				{
 					b.MessageType = "ignore";
 				}
 				else
 				{
-					var isEmotion = int.Parse(info[0][12].Value) == 1;
+					// 安全解析表情标志，避免溢出
+					var isEmotion = int.TryParse(info[0][12].Value, out var emotionFlag) && emotionFlag == 1;
 					// 处理 extra 字段，增加空值检查
 					JSONNode extra = null;
 					try
@@ -109,11 +111,12 @@ namespace ChatCore.Models.Bilibili
 					// 处理颜色，增加空值检查
 					if (extra != null && extra["color"] != null)
 					{
-						try
+						// 使用 TryParse 安全解析颜色值
+						if (int.TryParse(extra["color"], out var colorValue))
 						{
-							b.Color = "#" + int.Parse(extra["color"]).ToString("X");
+							b.Color = "#" + colorValue.ToString("X");
 						}
-						catch
+						else
 						{
 							b.Color = "#FFFFFF"; // 默认白色
 						}
@@ -823,7 +826,15 @@ namespace ChatCore.Models.Bilibili
 				var data = danmuku["data"].AsObject!;
 				b.IsSystemMessage = true;
 				var extra = new BilibiliChatMessageExtraPK();
-				extra.pk_timer = int.Parse(data["pre_timer"].Value);
+				// 安全解析 PK 倒计时
+				if (int.TryParse(data["pre_timer"].Value, out var preTimer))
+				{
+					extra.pk_timer = preTimer;
+				}
+				else
+				{
+					extra.pk_timer = 0;
+				}
 				extra.pk_uname = data["uname"].Value;
 				b.extra = extra;
 
@@ -838,10 +849,14 @@ namespace ChatCore.Models.Bilibili
 				var data = danmuku["data"].AsObject!;
 				b.IsSystemMessage = true;
 				var extra = new BilibiliChatMessageExtraPK();
-				extra.pk_timer = int.Parse(data["pk_frozen_time"].Value) - int.Parse(data["pk_start_time"].Value);
+				// 安全解析 PK 时间
+				int frozenTime = 0, startTime = 0;
+				int.TryParse(data["pk_frozen_time"].Value, out frozenTime);
+				int.TryParse(data["pk_start_time"].Value, out startTime);
+				extra.pk_timer = frozenTime - startTime;
 				b.extra = extra;
 
-				b.Message = "【大乱斗】距离结束还有" + (int.Parse(data["pk_frozen_time"].Value) - int.Parse(data["pk_start_time"].Value)) + "秒";
+				b.Message = "【大乱斗】距离结束还有" + extra.pk_timer + "秒";
 			});
 			commands.Add("PK_BATTLE_SETTLE", (b, danmuku) => {
 				b.MessageType = "pk_end";

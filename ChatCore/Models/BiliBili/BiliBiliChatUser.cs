@@ -162,7 +162,7 @@ namespace ChatCore.Models.Bilibili
 			this.IsModerator = IsModerator == 1;
 		}
 
-		public void SetIsFan(int MedalOwnerRoomId, int BoardcasterUid = 0) {
+		public void SetIsFan(int MedalOwnerRoomId, long BoardcasterUid = 0) {
 			IsFan = (MedalOwnerRoomId == -1 && BoardcasterUid == -1) || (MedalOwnerRoomId == BilibiliService._roomID) || (BoardcasterUid == BilibiliService._userID);
 		}
 
@@ -175,7 +175,7 @@ namespace ChatCore.Models.Bilibili
 			HonorLevel = Level;
 		}
 
-		public void SetMedal(int Level = 0, string MedalName = "", int GuardLevel = 0, int MedalOwnerRoomId = 0, int BoardcasterUid = 0)
+		public void SetMedal(int Level = 0, string MedalName = "", int GuardLevel = 0, int MedalOwnerRoomId = 0, long BoardcasterUid = 0)
 		{
 			var badgeList = new List<IChatBadge>();
 			var newBadge = new BilibiliChatBadge();
@@ -194,7 +194,7 @@ namespace ChatCore.Models.Bilibili
 			SetIsFan(MedalOwnerRoomId, BoardcasterUid);
 		}
 
-		public void SetMedal(int Level, string MedalName, bool ColorInInt, string[] ColorData, int GuardLevel, int MedalOwnerRoomId, int BoardcasterUid) {
+		public void SetMedal(int Level, string MedalName, bool ColorInInt, string[] ColorData, int GuardLevel, int MedalOwnerRoomId, long BoardcasterUid) {
 			var badgeList = new List<IChatBadge>();
 			var newBadge = new BilibiliChatBadge();
 			newBadge.Name = MedalName;
@@ -312,7 +312,7 @@ namespace ChatCore.Models.Bilibili
 				Avatar = string.Empty;
 				return;
 			}
-			
+
 			var avatarImageUrl = await GetUserInfoAsync(Id) + @"@128w_128h.png";
 			var scale = 3;
 			var sb = new StringBuilder(SVG_FRAME);
