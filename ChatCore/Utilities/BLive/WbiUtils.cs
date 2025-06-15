@@ -81,7 +81,7 @@ namespace ChatCore.Utilities.BLive
 					cookieWithOpus = "opus-goback=1";
 				}
 				
-				Console.WriteLine($"[WbiUtils] | [GetWbiMixinKeyAsync] | Sending request with cookie: {(string.IsNullOrEmpty(cookieWithOpus) ? "<empty>" : "<has_cookie>")}");
+				// Console.WriteLine($"[WbiUtils] | [GetWbiMixinKeyAsync] | Sending request with cookie: {(string.IsNullOrEmpty(cookieWithOpus) ? "<empty>" : "<has_cookie>")}");
 				var result = await httpClient.HttpClient(apiUrl, HttpMethod.Get, cookieWithOpus, null);
 
 				if (result != null && result[0] == "OK")
@@ -101,8 +101,8 @@ namespace ChatCore.Utilities.BLive
 							var imgUrl = wbiImg["img_url"]?.Value ?? "";
 							var subUrl = wbiImg["sub_url"]?.Value ?? "";
 
-							Console.WriteLine($"[WbiUtils] | [GetWbiMixinKeyAsync] | img_url: {imgUrl}");
-							Console.WriteLine($"[WbiUtils] | [GetWbiMixinKeyAsync] | sub_url: {subUrl}");
+							// Console.WriteLine($"[WbiUtils] | [GetWbiMixinKeyAsync] | img_url: {imgUrl}");
+							// Console.WriteLine($"[WbiUtils] | [GetWbiMixinKeyAsync] | sub_url: {subUrl}");
 
 							if (!string.IsNullOrEmpty(imgUrl) && !string.IsNullOrEmpty(subUrl))
 							{
@@ -110,7 +110,7 @@ namespace ChatCore.Utilities.BLive
 								var imgKey = ExtractFileName(imgUrl);
 								var subKey = ExtractFileName(subUrl);
 
-								Console.WriteLine($"[WbiUtils] | [GetWbiMixinKeyAsync] | imgKey: {imgKey}, subKey: {subKey}");
+								// Console.WriteLine($"[WbiUtils] | [GetWbiMixinKeyAsync] | imgKey: {imgKey}, subKey: {subKey}");
 
 								// 拼接并重排
 								var ae = imgKey + subKey;
@@ -128,7 +128,7 @@ namespace ChatCore.Utilities.BLive
 								_cachedMixinKey = mixinKey.ToString().Substring(0, Math.Min(32, mixinKey.Length));
 								_cacheTime = DateTime.Now;
 
-								Console.WriteLine($"[WbiUtils] | [GetWbiMixinKeyAsync] | Mixin key retrieved successfully (length: {_cachedMixinKey.Length})");
+								// Console.WriteLine($"[WbiUtils] | [GetWbiMixinKeyAsync] | Mixin key retrieved successfully (length: {_cachedMixinKey.Length})");
 								return _cachedMixinKey;
 							}
 							else

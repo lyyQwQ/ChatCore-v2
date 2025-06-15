@@ -569,13 +569,13 @@ namespace ChatCore.Services.Bilibili
 			try
 			{
 				// 调试日志：输出原始 Cookie 信息
-				_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Raw Cookie: {(_authManager.Credentials.Bilibili_cookies?.Length > 50 ? _authManager.Credentials.Bilibili_cookies.Substring(0, 50) + "..." : _authManager.Credentials.Bilibili_cookies)}");
+				// _logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | Raw Cookie: {(_authManager.Credentials.Bilibili_cookies?.Length > 50 ? _authManager.Credentials.Bilibili_cookies.Substring(0, 50) + "..." : _authManager.Credentials.Bilibili_cookies)}");
 
 				_buvid3 = GetValueFromCookie("buvid3");
-				_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | buvid3 value: '{_buvid3}'");
+				// _logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | buvid3 value: '{_buvid3}'");
 
 				var _dedeUserID = GetValueFromCookie("DedeUserID");
-				_logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | DedeUserID raw value: '{_dedeUserID}' (length: {_dedeUserID?.Length ?? 0})");
+				// _logger.LogInformation($"[BilibiliService] | [GetChatBuvidAsync] | DedeUserID raw value: '{_dedeUserID}' (length: {_dedeUserID?.Length ?? 0})");
 
 				// 检查 DedeUserID 是否为有效数字
 				if (!string.IsNullOrWhiteSpace(_dedeUserID))
@@ -738,13 +738,13 @@ namespace ChatCore.Services.Bilibili
 		private string GetValueFromCookie(string key) {
 			try
 			{
-				_logger.LogInformation($"[BilibiliService] | [GetValueFromCookie] | Getting value for key: '{key}'");
+				// _logger.LogInformation($"[BilibiliService] | [GetValueFromCookie] | Getting value for key: '{key}'");
 
 				var rawCookie = _authManager.Credentials.Bilibili_cookies;
-				_logger.LogInformation($"[BilibiliService] | [GetValueFromCookie] | Raw cookie length: {rawCookie?.Length ?? 0}");
+				// _logger.LogInformation($"[BilibiliService] | [GetValueFromCookie] | Raw cookie length: {rawCookie?.Length ?? 0}");
 
 				var clean_cookie = new HttpClientUtils().RemoveExpiredTimeAndPath(rawCookie);
-				_logger.LogInformation($"[BilibiliService] | [GetValueFromCookie] | Clean cookie length: {clean_cookie?.Length ?? 0}");
+				// _logger.LogInformation($"[BilibiliService] | [GetValueFromCookie] | Clean cookie length: {clean_cookie?.Length ?? 0}");
 
 				if (string.IsNullOrEmpty(clean_cookie))
 				{
@@ -755,7 +755,7 @@ namespace ChatCore.Services.Bilibili
 				var _cookie_items = Regex.Matches(clean_cookie, @"(.+?)(?:=(.+?))?(?:;|$|,(?!\s))").Cast<Match>()
 									 .ToDictionary(m => m.Groups[1].Value.Trim(), m => m.Groups[2].Value.Trim(), StringComparer.OrdinalIgnoreCase);
 
-				_logger.LogInformation($"[BilibiliService] | [GetValueFromCookie] | Found {_cookie_items.Count} cookie items");
+				// _logger.LogInformation($"[BilibiliService] | [GetValueFromCookie] | Found {_cookie_items.Count} cookie items");
 
 				if (_cookie_items.TryGetValue(key, out var value))
 				{
@@ -1346,7 +1346,7 @@ namespace ChatCore.Services.Bilibili
 			_logger.LogInformation($"  - _roomID: {_roomID}");
 			_logger.LogInformation($"  - _randomUid: {_randomUid}");
 			_logger.LogInformation($"  - _chatToken: {(_chatToken?.Length > 0 ? $"Set ({_chatToken.Length} chars)" : "Empty/Null")}");
-			_logger.LogInformation($"  - _buvid3: {(_buvid3?.Length > 0 ? $"Set ({_buvid3.Length} chars)" : "Empty/Null")}");
+			// _logger.LogInformation($"  - _buvid3: {(_buvid3?.Length > 0 ? $"Set ({_buvid3.Length} chars)" : "Empty/Null")}");
 			_logger.LogInformation($"  - Method: {_settings.danmuku_service_method}");
 			
 			_logger.LogInformation($"[BilibiliService] | [SendGreetingPacket] | Send Greeting packet. Connect to room {_roomID} via {_settings.danmuku_service_method}");
