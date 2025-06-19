@@ -443,7 +443,38 @@ namespace ChatCore.Models.Bilibili
 				Sender.SetUid(b.Uid);
 				Sender.SetUserName(b.Username);
 				//Sender.SetIsModerator(info[2][2].AsInt);
-				Sender.SetMedal(data["fans_medal"]["medal_level"].AsInt, data["fans_medal"]["medal_name"].Value, true, new string[] { data["fans_medal"]["medal_color_start"].Value.ToString(), data["fans_medal"]["medal_color_end"].Value.ToString(), data["fans_medal"]["medal_color_border"].Value.ToString() }, data["fans_medal"]["guard_level"].AsInt, data["fans_medal"]["anchor_roomid"].AsInt, data["fans_medal"]["target_id"].AsInt);
+				
+				// 检查 fans_medal 是否存在
+				if (data["fans_medal"] != null && !data["fans_medal"].IsNull)
+				{
+					var fansMedal = data["fans_medal"];
+					// 检查必要的子属性是否存在
+					if (fansMedal["medal_level"] != null && fansMedal["medal_name"] != null)
+					{
+						// 安全获取各个属性值，提供默认值
+						var medalLevel = fansMedal["medal_level"].AsInt;
+						var medalName = fansMedal["medal_name"].Value;
+						var medalColorStart = fansMedal["medal_color_start"]?.Value?.ToString() ?? "";
+						var medalColorEnd = fansMedal["medal_color_end"]?.Value?.ToString() ?? "";
+						var medalColorBorder = fansMedal["medal_color_border"]?.Value?.ToString() ?? "";
+						var guardLevel = fansMedal["guard_level"]?.AsInt ?? 0;
+						var anchorRoomId = fansMedal["anchor_roomid"]?.AsInt ?? 0;
+						var targetId = fansMedal["target_id"]?.AsInt ?? 0;
+						
+						Sender.SetMedal(medalLevel, medalName, true, new string[] { medalColorStart, medalColorEnd, medalColorBorder }, guardLevel, anchorRoomId, targetId);
+					}
+					else
+					{
+						// 粉丝勋章数据不完整，设置为无勋章
+						Sender.SetMedal();
+					}
+				}
+				else
+				{
+					// 没有粉丝勋章
+					Sender.SetMedal();
+				}
+				
 				Sender.UpdateDisplayName();
 				b.Sender = Sender;
 
@@ -800,7 +831,38 @@ namespace ChatCore.Models.Bilibili
 				var Sender = new BilibiliChatUser();
 				Sender.SetUid(b.Uid);
 				Sender.SetUserName(b.Username);
-				Sender.SetMedal(data["fans_medal"]["medal_level"].AsInt, data["fans_medal"]["medal_name"].Value, true, new string[] { data["fans_medal"]["medal_color_start"].Value.ToString(), data["fans_medal"]["medal_color_end"].Value.ToString(), data["fans_medal"]["medal_color_border"].Value.ToString() }, data["fans_medal"]["guard_level"].AsInt, data["fans_medal"]["anchor_roomid"].AsInt, data["fans_medal"]["target_id"]);
+				
+				// 检查 fans_medal 是否存在
+				if (data["fans_medal"] != null && !data["fans_medal"].IsNull)
+				{
+					var fansMedal = data["fans_medal"];
+					// 检查必要的子属性是否存在
+					if (fansMedal["medal_level"] != null && fansMedal["medal_name"] != null)
+					{
+						// 安全获取各个属性值，提供默认值
+						var medalLevel = fansMedal["medal_level"].AsInt;
+						var medalName = fansMedal["medal_name"].Value;
+						var medalColorStart = fansMedal["medal_color_start"]?.Value?.ToString() ?? "";
+						var medalColorEnd = fansMedal["medal_color_end"]?.Value?.ToString() ?? "";
+						var medalColorBorder = fansMedal["medal_color_border"]?.Value?.ToString() ?? "";
+						var guardLevel = fansMedal["guard_level"]?.AsInt ?? 0;
+						var anchorRoomId = fansMedal["anchor_roomid"]?.AsInt ?? 0;
+						var targetId = fansMedal["target_id"]?.AsInt ?? 0;
+						
+						Sender.SetMedal(medalLevel, medalName, true, new string[] { medalColorStart, medalColorEnd, medalColorBorder }, guardLevel, anchorRoomId, targetId);
+					}
+					else
+					{
+						// 粉丝勋章数据不完整，设置为无勋章
+						Sender.SetMedal();
+					}
+				}
+				else
+				{
+					// 没有粉丝勋章
+					Sender.SetMedal();
+				}
+				
 				Sender.UpdateDisplayName(true);
 				b.Sender = Sender;
 
