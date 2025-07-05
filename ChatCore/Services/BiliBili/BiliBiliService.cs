@@ -364,6 +364,16 @@ namespace ChatCore.Services.Bilibili
 		{
 			_logger.LogInformation($"[BilibiliService] | [ws_OnDataRecevied] | Received {arg2.Length} bytes");
 			
+			// 协议版本统计字典（用于当前数据包批次）
+			var versionStats = new Dictionary<int, int>();
+			var protocolNames = new Dictionary<int, string>
+			{
+				{ 0, "JSON(RAW)" },
+				{ 1, "JSON(RAW)" },
+				{ 2, "ZLIB" },
+				{ 3, "BROTLI" }
+			};
+			
 			// 输出原始数据的前16个字节（头部信息）
 			if (arg2.Length >= 16)
 			{
@@ -372,7 +382,13 @@ namespace ChatCore.Services.Bilibili
 				var version = DataView.GetInt16(arg2, 6);
 				var operation = DataView.GetInt32(arg2, 8);
 				var sequence = DataView.GetInt32(arg2, 12);
-				_logger.LogInformation($"[BilibiliService] | [ws_OnDataRecevied] | Header: PacketLen={packetLength}, HeaderLen={headerLength}, Version={version}, Operation={operation}, Sequence={sequence}");
+				
+				// 记录协议版本和操作类型
+				var protocolName = protocolNames.ContainsKey(version) ? protocolNames[version] : $"UNKNOWN({version})";
+				_logger.LogInformation($"[BilibiliService] | [ws_OnDataRecevied] | Header: PacketLen={packetLength}, HeaderLen={headerLength}, Version={version}({protocolName}), Operation={operation}, Sequence={sequence}");
+				
+				// 初始化协议版本统计
+				versionStats[version] = versionStats.ContainsKey(version) ? versionStats[version] + 1 : 1;
 			}
 			
 			//var buffer = new byte[arg2.Length];
@@ -409,7 +425,18 @@ namespace ChatCore.Services.Bilibili
 						_logger.LogInformation($"[BilibiliService] | [ws_OnDataRecevied] | Added channel {RoomID} to the channel list.");
 						JoinRoomCallbacks?.InvokeAll(arg1, this, _channels[$"{RoomID}"], _logger);
 					}
-					StartHeartBeat();
+					
+					// 认证成功后立即发送心跳包（关键步骤）
+					_logger.LogInformation("[BilibiliService] | [ws_OnDataRecevied] | Sending immediate heartbeat after authentication");
+					SendHeartBeatPacket();
+					
+					// 启动定期心跳
+					if (!packetTimer.Enabled)
+					{
+						packetTimer.Interval = 30000; // 30 seconds
+						packetTimer.Enabled = true;
+						_logger.LogInformation("[BilibiliService] | [ws_OnDataRecevied] | Started heartbeat timer");
+					}
 				} else if (message.Operation == BilibiliPacket.DanmakuOperation.HeartBeatAck)
 				{
 					//Console.WriteLine($"Popularity: {message.Body}");
@@ -436,7 +463,17 @@ namespace ChatCore.Services.Bilibili
 				}
 			}
 			
-			// 输出总共处理的消息数量
+			// 输出协议版本统计和总消息数量
+			if (versionStats.Count > 0)
+			{
+				var statsInfo = string.Join(", ", versionStats.Select(kv =>
+				{
+					var protocolName = protocolNames.ContainsKey(kv.Key) ? protocolNames[kv.Key] : $"UNKNOWN({kv.Key})";
+					return $"v{kv.Key}({protocolName}):{kv.Value}";
+				}));
+				_logger.LogInformation($"[BilibiliService] | [ws_OnDataRecevied] | Protocol version distribution: {statsInfo}");
+			}
+			
 			_logger.LogInformation($"[BilibiliService] | [ws_OnDataRecevied] | Processed {messageCount} messages in total");
 		}
 
@@ -485,11 +522,24 @@ namespace ChatCore.Services.Bilibili
 			try
 			{
 				_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | Getting channel config for room ID: {roomID}");
-				var apiResult = await (new HttpClientUtils()).HttpClient(BilibiliChannelInfoApi + roomID, HttpMethod.Get, null, null);
+				// 🔥 关键修复：传递Cookie以避免352错误
+				// 直接使用 _cookies 而不依赖 _cookie_valid，因为这个方法可能在 cookie 验证之前被调用
+				var cookieHeader = !string.IsNullOrEmpty(_cookies) ? _cookies : _authManager.Credentials.Bilibili_cookies;
+				var apiResult = await (new HttpClientUtils()).HttpClient(BilibiliChannelInfoApi + roomID, HttpMethod.Get, cookieHeader, null);
 				if (apiResult != null && apiResult[0] == "OK")
 				{
-					_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | API Response: {(apiResult[1].Length > 500 ? apiResult[1].Substring(0, 500) + "..." : apiResult[1])}");
-					var NewChannelInfo = JSONNode.Parse(apiResult[1]);
+					var responseContent = apiResult[1];
+					_logger.LogInformation($"[BilibiliService] | [GetChannelConfigAsync] | API Response: {(responseContent.Length > 500 ? responseContent.Substring(0, 500) + "..." : responseContent)}");
+					
+					// 🔥 检测352错误
+					if (responseContent.Contains("-352") || responseContent.Contains("\"code\":-352"))
+					{
+						_logger.LogWarning("[BilibiliService] | [GetChannelConfigAsync] | Detected -352 error (风控), consider switching to Legacy mode");
+						// 可以在这里触发自动降级逻辑
+						return;
+					}
+					
+					var NewChannelInfo = JSONNode.Parse(responseContent);
 					if (NewChannelInfo["data"]["room_info"]["room_id"] != string.Empty)
 					{
 						// 先获取 UID 字符串
@@ -718,12 +768,13 @@ namespace ChatCore.Services.Bilibili
 					}
 				}
 
-				// 如果所有重试都失败，自动降级到 Legacy 模式
+				// 如果所有重试都失败，记录错误但不降级到 Legacy 模式（因为 Legacy 已失效）
 				if (string.IsNullOrEmpty(_buvid3))
 				{
-					_logger.LogWarning($"[BilibiliService] | [GetChatBuvidAsync] | Failed to get buvid3 after {maxRetries} attempts, switching to Legacy mode");
-					_settings.danmuku_service_method = "Legacy";
-					_settings.Save();
+					_logger.LogError($"[BilibiliService] | [GetChatBuvidAsync] | Failed to get buvid3 after {maxRetries} attempts. Legacy mode is no longer functional, please fix the issue.");
+					// 注释掉自动降级，因为 Legacy 模式已经完全失效
+					// _settings.danmuku_service_method = "Legacy";
+					// _settings.Save();
 				}
 			}
 			else
@@ -776,57 +827,169 @@ namespace ChatCore.Services.Bilibili
 			}
 		}
 
+                /// <summary>
+                /// 🔥 完全移植Python版本的Cookie验证逻辑，包含弹幕API测试
+                /// </summary>
                 private async Task<bool> GetCookieStatusAsync()
                 {
-                        _logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Start");
+                        _logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Start - Python-style validation");
                         var _csrf = GetValueFromCookie("bili_jct");
                         var _status = false;
-                        if (_csrf != "")
+                        
+                        if (string.IsNullOrEmpty(_csrf))
                         {
-                                try
+                                _logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Failed, Cookie is lack of csrf");
+                                return false;
+                        }
+
+                        try
+                        {
+                                // 🔥 第一步：基础Cookie验证（与原逻辑保持一致）
+                                var content = new FormUrlEncodedContent(new Dictionary<string, string>
                                 {
-                                        var content = new FormUrlEncodedContent(new Dictionary<string, string>
+                                        { "msg_notify", "1" },
+                                        { "show_unfollowed_msg", "1" },
+                                        { "build", "0" },
+                                        { "mobi_app", "web" },
+                                        { "csrf_token", _csrf },
+                                        { "csrf", _csrf }
+                                });
+                                
+                                var apiResult = await (new HttpClientUtils()).HttpClient(BilibiliValidateLoginInfoApi, HttpMethod.Post, _authManager.Credentials.Bilibili_cookies, content);
+                                if (apiResult != null && apiResult[0] == "OK")
+                                {
+                                        var NewCookieStatusInfo = JSONNode.Parse(apiResult[1]);
+                                        var cookieCodeNode = NewCookieStatusInfo["code"];
+                                        if (cookieCodeNode != null && cookieCodeNode.ToString() == "0")
                                         {
-                                                { "msg_notify", "1" },
-                                                { "show_unfollowed_msg", "1" },
-                                                { "build", "0" },
-                                                { "mobi_app", "web" },
-                                                { "csrf_token", _csrf },
-                                                { "csrf", _csrf }
-                                        });
-                                        var apiResult = await (new HttpClientUtils()).HttpClient(BilibiliValidateLoginInfoApi, HttpMethod.Post, _authManager.Credentials.Bilibili_cookies, content);
-                                        if (apiResult != null && apiResult[0] == "OK")
-                                        {
-                                                var NewCookieStatusInfo = JSONNode.Parse(apiResult[1]);
-                                                // 使用字符串比较避免 int 溢出
-                                                var cookieCodeNode = NewCookieStatusInfo["code"];
-                                                if (cookieCodeNode != null && cookieCodeNode.ToString() == "0")
+                                                _logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Basic cookie validation passed");
+                                                
+                                                // 🔥 第二步：弹幕API测试（Python版本的关键步骤）
+                                                _status = await TestDanmuApiAsync();
+                                                if (_status)
                                                 {
-                                                        _logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Valid!");
-                                                        _status = true;
+                                                        _logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Full validation success - danmu API test passed");
                                                 }
                                                 else
                                                 {
-                                                        _logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Failed, Cookie is invalid!");
+                                                        _logger.LogWarning($"[BilibiliService] | [GetCookieStatusAsync] | Basic cookie valid but danmu API test failed");
                                                 }
                                         }
                                         else
                                         {
-                                                _logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Get cookie status failed. ({(apiResult == null ? "connection failed" : (apiResult[0] + " " + apiResult[1]))})");
+                                                _logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Failed, Cookie is invalid!");
                                         }
-				}
-				catch
-				{
-					_logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Get cookie status failed. (Exception)");
-				}
-			}
-			else
-			{
-				_logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Failed, Cookie is lack of csrf");
-			}
+                                }
+                                else
+                                {
+                                        _logger.LogInformation($"[BilibiliService] | [GetCookieStatusAsync] | Get cookie status failed. ({(apiResult == null ? "connection failed" : (apiResult[0] + " " + apiResult[1]))})");
+                                }
+                        }
+                        catch (Exception ex)
+                        {
+                                _logger.LogError($"[BilibiliService] | [GetCookieStatusAsync] | Exception: {ex.Message}");
+                        }
 
-			return _status;
-		}
+                        return _status;
+                }
+
+                /// <summary>
+                /// 🔥 新增：完全移植Python版本的弹幕API测试逻辑（auth_validator.py第137-220行）
+                /// </summary>
+                private async Task<bool> TestDanmuApiAsync()
+                {
+                        _logger.LogInformation($"[BilibiliService] | [TestDanmuApiAsync] | Starting danmu API test (Python-style)");
+                        
+                        try
+                        {
+                                // 🔥 使用当前房间ID进行弹幕API测试
+                                var testRoomId = _roomID > 0 ? _roomID : 22474409; // 默认测试房间
+                                
+                                // 构建测试参数（与GetChatTokenAsync保持一致）
+                                var testParams = new Dictionary<string, string>
+                                {
+                                        ["id"] = testRoomId.ToString(),
+                                        ["type"] = "0",
+                                        ["web_location"] = "444.8"
+                                };
+
+                                // 🔥 尝试使用WBI签名进行测试
+                                string testUrl;
+                                try
+                                {
+                                        var signedParams = await ChatCore.Utilities.BLive.WbiUtils.SignParametersAsync(testParams, _authManager.Credentials.Bilibili_cookies);
+                                        if (signedParams.ContainsKey("w_rid"))
+                                        {
+                                                var queryString = string.Join("&", signedParams.Select(kv => $"{kv.Key}={Uri.EscapeDataString(kv.Value)}"));
+                                                testUrl = $"https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?{queryString}";
+                                                _logger.LogInformation($"[BilibiliService] | [TestDanmuApiAsync] | Using WBI signed URL for test");
+                                        }
+                                        else
+                                        {
+                                                throw new InvalidOperationException("WBI signing failed during test");
+                                        }
+                                }
+                                catch (Exception wbiEx)
+                                {
+                                        _logger.LogWarning($"[BilibiliService] | [TestDanmuApiAsync] | WBI signing failed during test: {wbiEx.Message}, using basic URL");
+                                        testUrl = $"https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?type=0&web_location=444.8&id={testRoomId}";
+                                }
+
+                                // 🔥 执行API测试请求 - 不添加opus-goback（与Python版本一致）
+                                var cookieHeader = _authManager.Credentials.Bilibili_cookies;
+
+                                var testResult = await (new HttpClientUtils()).HttpClient(testUrl, HttpMethod.Get, cookieHeader, null);
+                                
+                                if (testResult != null && testResult[0] == "OK")
+                                {
+                                        var testResponse = JSONNode.Parse(testResult[1]);
+                                        var codeNode = testResponse["code"];
+                                        var codeValue = codeNode?.ToString();
+                                        
+                                        _logger.LogInformation($"[BilibiliService] | [TestDanmuApiAsync] | API test response code: {codeValue}");
+                                        
+                                        if (codeValue == "0")
+                                        {
+                                                // 🔥 成功情况：检查token是否存在
+                                                var tokenNode = testResponse["data"]?["token"];
+                                                if (tokenNode != null && !string.IsNullOrEmpty(tokenNode.Value))
+                                                {
+                                                        _logger.LogInformation($"[BilibiliService] | [TestDanmuApiAsync] | ✅ Danmu API test PASSED - token received (length: {tokenNode.Value.Length})");
+                                                        return true;
+                                                }
+                                                else
+                                                {
+                                                        _logger.LogWarning($"[BilibiliService] | [TestDanmuApiAsync] | ❌ API returned code 0 but no token found");
+                                                        return false;
+                                                }
+                                        }
+                                        else if (codeValue == "-352")
+                                        {
+                                                // 🔥 352错误：这是核心问题
+                                                _logger.LogError($"[BilibiliService] | [TestDanmuApiAsync] | ❌ 352 ERROR detected during danmu API test");
+                                                _logger.LogError($"[BilibiliService] | [TestDanmuApiAsync] | Response: {testResult[1]}");
+                                                return false;
+                                        }
+                                        else
+                                        {
+                                                // 🔥 其他错误码
+                                                var messageNode = testResponse["message"];
+                                                _logger.LogWarning($"[BilibiliService] | [TestDanmuApiAsync] | ❌ API test failed with code {codeValue}, message: {messageNode?.Value ?? "unknown"}");
+                                                return false;
+                                        }
+                                }
+                                else
+                                {
+                                        _logger.LogError($"[BilibiliService] | [TestDanmuApiAsync] | ❌ HTTP request failed: {(testResult == null ? "no response" : testResult[0])}");
+                                        return false;
+                                }
+                        }
+                        catch (Exception ex)
+                        {
+                                _logger.LogError($"[BilibiliService] | [TestDanmuApiAsync] | ❌ Exception during danmu API test: {ex.Message}");
+                                return false;
+                        }
+                }
 
 		private async Task UpdateCookieStatus() {
 			_cookie_valid = await GetCookieStatusAsync();
@@ -872,9 +1035,15 @@ namespace ChatCore.Services.Bilibili
 				string finalUrl;
 				try
 				{
-					// getDanmuInfo API 使用特殊的 web_location 值
-					parameters["web_location"] = "444.8";
-					var signedParams = await ChatCore.Utilities.BLive.WbiUtils.SignParametersAsync(parameters, _cookie_valid ? _authManager.Credentials.Bilibili_cookies : "");
+					// 构建带 WBI 签名的参数
+					var wbiParams = new Dictionary<string, string>
+					{
+						["id"] = roomID.ToString(),
+						["type"] = "0",
+						["web_location"] = "444.8"  // getDanmuInfo API 使用特殊的 web_location 值
+					};
+					
+					var signedParams = await ChatCore.Utilities.BLive.WbiUtils.SignParametersAsync(wbiParams, _authManager.Credentials.Bilibili_cookies);
 
 					// 验证签名是否成功
 					if (!signedParams.ContainsKey("w_rid"))
@@ -884,7 +1053,7 @@ namespace ChatCore.Services.Bilibili
 
 					var queryString = string.Join("&", signedParams.Select(kv => $"{kv.Key}={Uri.EscapeDataString(kv.Value)}"));
 					finalUrl = $"https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?{queryString}";
-					_logger.LogInformation($"[BilibiliService] | [GetChatTokenAsync] | Using WBI signed request");
+					_logger.LogInformation($"[BilibiliService] | [GetChatTokenAsync] | Using WBI signed request with w_rid: {signedParams["w_rid"].Substring(0, 8)}...");
 				}
 				catch (Exception wbiEx)
 				{
@@ -894,14 +1063,16 @@ namespace ChatCore.Services.Bilibili
 					// 清除 WBI 缓存
 					ChatCore.Utilities.BLive.WbiUtils.ClearCache();
 
-					// 自动降级到 Legacy 模式
+					// 不再自动降级到 Legacy 模式，因为 Legacy 已失效
 					if (_settings.danmuku_service_method == "Default")
 					{
-						_settings.danmuku_service_method = "Legacy";
-						_settings.Save();
-						_logger.LogWarning($"[BilibiliService] | [GetChatTokenAsync] | Permanently switched to Legacy mode due to WBI signing failure");
+						_logger.LogError($"[BilibiliService] | [GetChatTokenAsync] | WBI signing failed but Legacy mode is no longer functional. Need to fix the WBI issue.");
+						// 注释掉自动降级
+						// _settings.danmuku_service_method = "Legacy";
+						// _settings.Save();
+						// _logger.LogWarning($"[BilibiliService] | [GetChatTokenAsync] | Permanently switched to Legacy mode due to WBI signing failure");
 
-						// 触发重新连接，使用新的 Legacy 模式
+						// 仍然触发重新连接尝试
 						reloadWebsocketConnection();
 						return;
 					}
@@ -910,19 +1081,8 @@ namespace ChatCore.Services.Bilibili
 					finalUrl = $"https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?type=0&web_location=444.8&id={roomID}";
 				}
 
-				// 添加必要的 cookie: opus-goback=1
+				// 🔥 关键修复：不添加opus-goback=1（与Python版本保持一致）
 				var cookieHeader = _cookie_valid ? _authManager.Credentials.Bilibili_cookies : "";
-				if (!string.IsNullOrEmpty(cookieHeader))
-				{
-					if (!cookieHeader.Contains("opus-goback"))
-					{
-						cookieHeader += "; opus-goback=1";
-					}
-				}
-				else
-				{
-					cookieHeader = "opus-goback=1";
-				}
 
 				var apiResult = await (new HttpClientUtils()).HttpClient(finalUrl, HttpMethod.Get, cookieHeader, null);
 				if (apiResult != null && apiResult[0] == "OK")
@@ -934,23 +1094,41 @@ namespace ChatCore.Services.Bilibili
 					if (tokenCodeNode != null && tokenCodeNode.ToString() == "0")
 					{
 						_chatToken = NewChatTokenInfo["data"]["token"].Value;
-						_logger.LogInformation($"[BilibiliService] | [GetChatTokenAsync] | Success");
-						//_logger.LogInformation(apiResult[1]);
+						
+						// 验证 token 长度（应该是 280 字符左右）
+						if (_chatToken.Length < 200)
+						{
+							_logger.LogWarning($"[BilibiliService] | [GetChatTokenAsync] | Token length suspicious: {_chatToken.Length} chars (expected ~280)");
+						}
+						else
+						{
+							_logger.LogInformation($"[BilibiliService] | [GetChatTokenAsync] | Success - token length: {_chatToken.Length} chars");
+						}
+						
+						// 获取服务器列表（可选）
+						var hostListNode = NewChatTokenInfo["data"]["host_list"];
+						if (hostListNode != null && hostListNode.IsArray)
+						{
+							_logger.LogInformation($"[BilibiliService] | [GetChatTokenAsync] | Found {hostListNode.Count} available servers");
+						}
 					}
 					else
 					{
 						_logger.LogInformation($"[BilibiliService] | [GetChatTokenAsync] | Get token failed. ({NewChatTokenInfo["code"]} {NewChatTokenInfo["message"]})");
-						// 如果是 -352 错误，清除 WBI 缓存
-						// 检查是否为 -352 错误
+						// 如果是 -352 错误，使用智能重试逻辑
 						if (tokenCodeNode != null && tokenCodeNode.ToString() == "-352")
 						{
+							_logger.LogWarning($"[BilibiliService] | [GetChatTokenAsync] | 遇到352错误，实施智能重试策略");
+							
+							// 🔥 核心修复：添加延迟，避免被反爬虫系统检测
+							await Task.Delay(3000); // 等待3秒
+							
+							// 清除WBI缓存，但不立即重试
 							ChatCore.Utilities.BLive.WbiUtils.ClearCache();
-							_logger.LogInformation($"[BilibiliService] | [GetChatTokenAsync] | Cleared WBI cache due to -352 error");
-
-							// 自动切换到传统模式
-							_logger.LogWarning($"[BilibiliService] | [GetChatTokenAsync] | Switching to Legacy mode due to persistent -352 errors");
-							_settings.danmuku_service_method = "Legacy";
-							_settings.Save();
+							_logger.LogInformation($"[BilibiliService] | [GetChatTokenAsync] | 已清除WBI缓存，等待下次重连时重试");
+							
+							// 不在此处立即重试，让重连机制处理
+							_logger.LogError($"[BilibiliService] | [GetChatTokenAsync] | 352错误需要通过重连机制解决，避免频繁请求");
 						}
 					}
 				}
@@ -1344,16 +1522,21 @@ namespace ChatCore.Services.Bilibili
 			// 添加调试信息
 			_logger.LogInformation($"[BilibiliService] | [SendGreetingPacket] | Debug info:");
 			_logger.LogInformation($"  - _roomID: {_roomID}");
-			_logger.LogInformation($"  - _randomUid: {_randomUid}");
+			_logger.LogInformation($"  - _userID (real): {_userID}");
+			_logger.LogInformation($"  - _randomUid (deprecated): {_randomUid}");
 			_logger.LogInformation($"  - _chatToken: {(_chatToken?.Length > 0 ? $"Set ({_chatToken.Length} chars)" : "Empty/Null")}");
-			// _logger.LogInformation($"  - _buvid3: {(_buvid3?.Length > 0 ? $"Set ({_buvid3.Length} chars)" : "Empty/Null")}");
+			_logger.LogInformation($"  - _buvid3: {(_buvid3?.Length > 0 ? $"Set ({_buvid3.Length} chars)" : "Empty/Null")}");
 			_logger.LogInformation($"  - Method: {_settings.danmuku_service_method}");
 			
 			_logger.LogInformation($"[BilibiliService] | [SendGreetingPacket] | Send Greeting packet. Connect to room {_roomID} via {_settings.danmuku_service_method}");
 			switch (_settings.danmuku_service_method)
 			{
 				case "Default":
-					_websocketService.SendMessage(BilibiliPacket.CreateGreetingPacket(_randomUid, _roomID, _chatToken, _buvid3).PacketBuffer);
+					// 根据用户模式决定 buvid 值
+					// 修复：使用真实的用户ID而不是_randomUid
+					string buvidValue = _userID == 0 ? $"{Guid.NewGuid()}infoc" : "";
+					_logger.LogInformation($"[BilibiliService] | [SendGreetingPacket] | Using uid: {_userID}, buvid: {(string.IsNullOrEmpty(buvidValue) ? "<empty>" : buvidValue.Substring(0, 20) + "...")}");
+					_websocketService.SendMessage(BilibiliPacket.CreateGreetingPacket(_userID, _roomID, _chatToken, buvidValue).PacketBuffer);
 					break;
 				case "Legacy":
 					_websocketService.SendMessage(BilibiliPacket.CreateGreetingPacket(_randomUid, _roomID).PacketBuffer);
