@@ -43,10 +43,37 @@ namespace ChatCore.Models.Bilibili
 						decomp = dest.ToArray();
 					}
 				}
-				else if (version == 3) // Brotli - 暂时跳过
+				else if (version == 3) // Brotli
 				{
-					// 暂时不处理 Brotli 压缩，避免栈溢出问题
-					yield break;
+					// 🔥 修复：实现Brotli解压缩支持，解决栈溢出问题
+					try
+					{
+						DataView.ByteSlice(ref buffer, headerLength, packetLength);
+						var compressedSize = packetLength - headerLength;
+						
+						// 使用BrotliSharpLib进行解压缩，防止栈溢出
+						var decompressedData = BrotliSharpLib.Brotli.DecompressBuffer(buffer, 0, compressedSize);
+						
+						if (decompressedData != null && decompressedData.Length > 0)
+						{
+							decomp = decompressedData;
+							// 成功解压缩，记录统计信息
+							System.Diagnostics.Debug.WriteLine($"[DanmakuMessage] Brotli解压缩成功: 压缩前{compressedSize}字节 -> 解压后{decompressedData.Length}字节, 压缩比:{(float)compressedSize/decompressedData.Length:F2}");
+						}
+						else
+						{
+							// 解压缩失败，跳过这个数据包但不中断整个处理流程
+							System.Diagnostics.Debug.WriteLine($"[DanmakuMessage] Brotli解压缩返回空数据: 输入大小{compressedSize}字节");
+							yield break;
+						}
+					}
+					catch (Exception ex)
+					{
+						// Brotli解压缩失败时，跳过这个数据包但不中断整个处理流程
+						// 这样可以避免因单个损坏数据包导致整个连接断开
+						System.Diagnostics.Debug.WriteLine($"[DanmakuMessage] Brotli解压缩异常: {ex.GetType().Name}: {ex.Message}");
+						yield break;
+					}
 				}
 				else
 				{
