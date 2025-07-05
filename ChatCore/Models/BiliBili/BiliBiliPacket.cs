@@ -76,9 +76,9 @@ namespace ChatCore.Models.Bilibili
                        var json = new JSONObject();
                        json["uid"] = new JSONNumber(uid);
                        json["roomid"] = new JSONNumber(roomId);
-                       json["protover"] = new JSONNumber(2);  // 使用协议版本2（支持Deflate压缩）
+                       json["protover"] = new JSONNumber(1);  // 修复：与包头协议版本保持一致
                        json["platform"] = "web";
-                       json["clientver"] = "1.14.3";
+                       // 关键修复：移除 clientver 字段，这是导致连接断开的原因
                        json["type"] = new JSONNumber(2);
 
 			return new BilibiliPacket(DanmakuOperation.GreetingReq, json);
@@ -97,10 +97,10 @@ namespace ChatCore.Models.Bilibili
                        var json = new JSONObject();
                        json["uid"] = new JSONNumber(uid);
                        json["roomid"] = new JSONNumber(roomId);
-                       json["protover"] = new JSONNumber(2);  // 使用协议版本2（支持Deflate压缩）
+                       json["protover"] = new JSONNumber(1);  // 修复：与包头协议版本保持一致
                        json["buvid"] = new JSONString(buvid);
                        json["platform"] = new JSONString("web");
-                       json["clientver"] = new JSONString("1.14.3");
+                       // 关键修复：移除 clientver 字段
                        json["type"] = new JSONNumber(2);
                        json["key"] = new JSONString(token);
 
@@ -108,10 +108,9 @@ namespace ChatCore.Models.Bilibili
 			var jsonStr = "{" +
 				$"\"uid\":{uid}," +
 				$"\"roomid\":{roomId}," +
-				$"\"protover\":2," +
+				$"\"protover\":1," +
 				$"\"buvid\":\"{buvid}\"," +
 				$"\"platform\":\"web\"," +
-				$"\"clientver\":\"1.14.3\"," +
 				$"\"type\":2," +
 				$"\"key\":\"{token}\"" +
 				"}";
@@ -131,7 +130,8 @@ namespace ChatCore.Models.Bilibili
 		/// <returns></returns>
 		public static BilibiliPacket CreateHeartBeatPacket()
 		{
-			return new BilibiliPacket(DanmakuOperation.HeartBeatReq, "");
+			// 关键修复：心跳包内容为特定字符串，匹配 Python 版本
+			return new BilibiliPacket(DanmakuOperation.HeartBeatReq, "[object Object]");
 		}
 
 		public enum DanmakuOperation
