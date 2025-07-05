@@ -104,8 +104,16 @@ namespace ChatCore.Models.Bilibili
 
 				var path = (new PathProvider()).GetBadgesImagePath();
 				var badgeId = Name + "_" + Level.ToString() + (Guard == 3 ? "_舰长" : (Guard == 2 ? "_提督" : (Guard == 1 ? "_总督" : "")));
-				var filename = Path.Combine(path, ImageUtils.convertToValidFilename(badgeId) + ".svg");
-				var imagename = Path.Combine(path, ImageUtils.convertToValidFilename(badgeId) + ".png");
+				// 生成唯一的文件名以避免并发冲突
+				var uniqueId = Guid.NewGuid().ToString("N").Substring(0, 8);
+				var validBadgeId = ImageUtils.convertToValidFilename(badgeId);
+				// 如果转换后的文件名为空，使用默认名称
+				if (string.IsNullOrWhiteSpace(validBadgeId))
+				{
+					validBadgeId = "badge";
+				}
+				var filename = Path.Combine(path, $"{validBadgeId}_{uniqueId}.svg");
+				var imagename = Path.Combine(path, $"{validBadgeId}.png");
 
 				if (!Directory.Exists(path))
 				{
@@ -116,11 +124,24 @@ namespace ChatCore.Models.Bilibili
 					writer.WriteLine(sb.ToString());
 				}
 
-				ImageUtils.genImg(filename.ToString(), imagename.ToString(), (offset_level[1] + width[1] + nameLength) * scale, 44 * scale, true);
-
-				if (File.Exists(filename))
+				try
 				{
-					File.Delete(filename);
+					ImageUtils.genImg(filename.ToString(), imagename.ToString(), (offset_level[1] + width[1] + nameLength) * scale, 44 * scale, true);
+				}
+				finally
+				{
+					// 确保临时 SVG 文件被删除
+					try
+					{
+						if (File.Exists(filename))
+						{
+							File.Delete(filename);
+						}
+					}
+					catch
+					{
+						// 忽略删除失败的情况
+					}
 				}
 				Uri = (new System.Uri(imagename)).AbsoluteUri;
 				Id = badgeId;
