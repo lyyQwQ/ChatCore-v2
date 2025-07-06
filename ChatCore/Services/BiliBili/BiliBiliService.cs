@@ -937,6 +937,9 @@ namespace ChatCore.Services.Bilibili
 
                                 // 🔥 执行API测试请求 - 不添加opus-goback（与Python版本一致）
                                 var cookieHeader = _authManager.Credentials.Bilibili_cookies;
+                                
+                                // 🔥 标准化Cookie顺序（与Python版本保持一致）
+                                cookieHeader = CookieOrderHelper.StandardizeCookieOrder(cookieHeader, _logger);
 
                                 var testResult = await (new HttpClientUtils()).HttpClient(testUrl, HttpMethod.Get, cookieHeader, null);
                                 
@@ -1083,6 +1086,12 @@ namespace ChatCore.Services.Bilibili
 
 				// 🔥 关键修复：不添加opus-goback=1（与Python版本保持一致）
 				var cookieHeader = _cookie_valid ? _authManager.Credentials.Bilibili_cookies : "";
+				
+				// 🔥 标准化Cookie顺序（与Python版本保持一致）
+				if (!string.IsNullOrEmpty(cookieHeader))
+				{
+					cookieHeader = CookieOrderHelper.StandardizeCookieOrder(cookieHeader, _logger);
+				}
 
 				var apiResult = await (new HttpClientUtils()).HttpClient(finalUrl, HttpMethod.Get, cookieHeader, null);
 				if (apiResult != null && apiResult[0] == "OK")
@@ -1522,8 +1531,8 @@ namespace ChatCore.Services.Bilibili
 			// 添加调试信息
 			_logger.LogInformation($"[BilibiliService] | [SendGreetingPacket] | Debug info:");
 			_logger.LogInformation($"  - _roomID: {_roomID}");
-			_logger.LogInformation($"  - _userID (real): {_userID}");
-			_logger.LogInformation($"  - _randomUid (deprecated): {_randomUid}");
+			_logger.LogInformation($"  - _userID (streamer): {_userID}");
+			_logger.LogInformation($"  - _randomUid (login user): {_randomUid}");
 			_logger.LogInformation($"  - _chatToken: {(_chatToken?.Length > 0 ? $"Set ({_chatToken.Length} chars)" : "Empty/Null")}");
 			_logger.LogInformation($"  - _buvid3: {(_buvid3?.Length > 0 ? $"Set ({_buvid3.Length} chars)" : "Empty/Null")}");
 			_logger.LogInformation($"  - Method: {_settings.danmuku_service_method}");
@@ -1532,11 +1541,13 @@ namespace ChatCore.Services.Bilibili
 			switch (_settings.danmuku_service_method)
 			{
 				case "Default":
-					// 根据用户模式决定 buvid 值
-					// 修复：使用真实的用户ID而不是_randomUid
-					string buvidValue = _userID == 0 ? $"{Guid.NewGuid()}infoc" : "";
-					_logger.LogInformation($"[BilibiliService] | [SendGreetingPacket] | Using uid: {_userID}, buvid: {(string.IsNullOrEmpty(buvidValue) ? "<empty>" : buvidValue.Substring(0, 20) + "...")}");
-					_websocketService.SendMessage(BilibiliPacket.CreateGreetingPacket(_userID, _roomID, _chatToken, buvidValue).PacketBuffer);
+					// 🔥 关键修复：使用登录用户的ID (_randomUid) 而不是主播ID (_userID)
+					// _userID = 主播ID (14038094)，_randomUid = 登录用户ID (3546757015275963)
+					// 握手包必须使用登录用户的ID才能通过服务器验证
+					// 同时使用真实的 buvid3 而不是空字符串或生成的GUID
+					string buvidValue = !string.IsNullOrEmpty(_buvid3) ? _buvid3 : $"{Guid.NewGuid()}infoc";
+					_logger.LogInformation($"[BilibiliService] | [SendGreetingPacket] | 🔧 FIXED: Using login user uid: {_randomUid}, buvid: {buvidValue?.Substring(0, Math.Min(20, buvidValue?.Length ?? 0))}...");
+					_websocketService.SendMessage(BilibiliPacket.CreateGreetingPacket(_randomUid, _roomID, _chatToken ?? "", buvidValue).PacketBuffer);
 					break;
 				case "Legacy":
 					_websocketService.SendMessage(BilibiliPacket.CreateGreetingPacket(_randomUid, _roomID).PacketBuffer);
