@@ -283,6 +283,9 @@ namespace ChatCore.Services.Bilibili
 					_roomID = _authManager.Credentials.Bilibili_room_id;
 					GetChannelConfigAsync(_roomID);
 					GetChannelGiftRoomInfoAsync(_roomID);
+					// 房间号变更需要重新获取聊天 token / buvid，避免沿用旧房间的凭据导致连接失败
+					_chatToken = string.Empty;
+					_buvid3 = string.Empty;
 					reload_flag = true;
 				}
 				if (_cookies != _authManager.Credentials.Bilibili_cookies)
