@@ -89,6 +89,14 @@ namespace ChatCore.Utilities.BLive
 				// 直接使用原始cookies，不做任何修改
 				string cookieWithOpus = cookies ?? "";
 				
+				// 🔥 标准化Cookie顺序（与Python版本保持一致）
+				if (!string.IsNullOrEmpty(cookieWithOpus))
+				{
+					Console.WriteLine($"[WbiUtils] | [GetUserNavAsync] | 🍪 Original cookie length: {cookieWithOpus.Length}");
+					cookieWithOpus = CookieOrderHelper.StandardizeCookieOrder(cookieWithOpus, null);
+					Console.WriteLine($"[WbiUtils] | [GetUserNavAsync] | 🍪 Standardized cookie length: {cookieWithOpus.Length}");
+				}
+				
 				var result = await httpClient.HttpClient(apiUrl, HttpMethod.Get, cookieWithOpus, null);
 				
 				if (result != null && result[0] == "OK")

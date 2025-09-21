@@ -482,7 +482,11 @@ namespace ChatCore.Services
 
 				if (responseJson.HasKey("bilibili_cookies") && (_authManager.Credentials.Bilibili_cookies != responseJson["bilibili_cookies"]))
 				{
-					_authManager.Credentials.Bilibili_cookies = responseJson["bilibili_cookies"].Value;
+					// 🔥 标准化Cookie顺序（与Python版本保持一致）
+					var rawCookies = responseJson["bilibili_cookies"].Value;
+					var standardizedCookies = ChatCore.Utilities.CookieOrderHelper.StandardizeCookieOrder(rawCookies, null);
+					
+					_authManager.Credentials.Bilibili_cookies = standardizedCookies;
 					authChanged = true;
 					responseJson.Remove("bilibili_cookies");
 					if (_authManager.Credentials.Bilibili_cookies == _bilibiliLoginProvider.cookie)
