@@ -280,3 +280,8 @@ ChatCore/Resources/Web/statics/css/materialize.2.0.3-alpha.min.css
 
 ChatCore/Resources/Web/statics/js/materialize.2.0.3-alpha.min.js
 can_kao/
+
+# Local tooling/session files (do not commit)
+.claude-session-context.md
+.serena/
+test-cookie-order.sh
